@@ -96,7 +96,7 @@ download_packages_simple() {
                 # Копируем скачанные пакеты
                 for deb_file in *.deb; do
                     if [ -f "$deb_file" ]; then
-                        cp "$deb_file" "$DOWNLOAD_DIR/$deb_file"
+                        cp "$deb_file" "$DOWNLOAD_DIR"
                         echo "✅ Downloaded: $deb_file"
                     fi
                 done

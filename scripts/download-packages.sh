@@ -277,17 +277,6 @@ else
     fi
 fi
 
-# Финальная проверка
-echo ""
-echo "🔍 Final package check:"
-final_missing=$(check_downloaded_packages)
-if [ -z "$final_missing" ]; then
-    echo "🎉 SUCCESS: All critical packages downloaded!"
-else
-    echo "❌ MISSING: $final_missing"
-    echo "These packages need to be downloaded manually."
-fi
-
 # Создаем индекс репозитория
 echo ""
 echo "🏗️ Creating local repository..."
@@ -303,18 +292,24 @@ else
     echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
 fi
 
-# Финальный отчет
+# Финальная проверка и отчет
 echo ""
-echo "📊 Download Summary:"
+echo "🔍 Final package check:"
+final_missing=$(check_downloaded_packages)
 PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l || echo 0)
-echo "📁 Total packages downloaded: $PACKAGE_COUNT"
-echo "📋 Package list: $PACKAGE_LIST_FILE"
 
-if [ $PACKAGE_COUNT -gt 0 ]; then
-    echo ""
-    echo "🚀 Ready for offline installation!"
-    echo "To install packages: sudo dpkg -i $DOWNLOAD_DIR/*.deb"
+if [ -z "$final_missing" ]; then
+    echo "🎉 SUCCESS: All critical packages downloaded!"
+    echo "📊 Total packages: $PACKAGE_COUNT"
+    exit 0
 else
-    echo ""
-    echo "❌ No packages were downloaded. Please check your internet connection and repositories."
+    echo "❌ MISSING: $final_missing"
+    echo "📊 Total packages downloaded: $PACKAGE_COUNT"
+
+    if [ $PACKAGE_COUNT -gt 0 ]; then
+        echo "⚠️  But we have $PACKAGE_COUNT packages, continuing..."
+        exit 0
+    else
+        exit 1
+    fi
 fi

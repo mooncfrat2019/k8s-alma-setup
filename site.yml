@@ -1,12 +1,31 @@
 ---
-- name: Развертывание HA Kubernetes кластера с внутренним registry
+- name: Проверка обязательных переменных
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Проверка наличия обязательных переменных
+      assert:
+        that:
+          - super_user is defined
+          - host_1 is defined
+          - host_2 is defined
+          - host_3 is defined
+          - host_registry is defined
+        msg: "Обязательные переменные super_user, host_1, host_2, host_3, host_registry должны быть определены"
+      tags: always
+
+- name: Перенос и распаковка оффлайн бандла
   hosts: all
   become: yes
   gather_facts: yes
-  pre_tasks:
-    - name: Обновление кэша фактов Ansible
-      setup:
+  roles:
+    - role: transfer
+      tags: transfer
 
+- name: Базовая настройка системы
+  hosts: all
+  become: yes
   roles:
     - role: common
       tags: common
@@ -31,7 +50,6 @@
   roles:
     - role: containerd
       tags: containerd
-
     - role: kubernetes
       tags: kubernetes
 

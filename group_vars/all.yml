@@ -1,4 +1,8 @@
 ---
+# Transfer configuration
+bundle_path: "{{ playbook_dir }}/files/k8s-offline-bundle.tar.gz"
+cleanup_transfer: true
+
 # User configuration
 k8s_user: "{{ ansible_user }}"
 k8s_group: "{{ k8s_user }}"

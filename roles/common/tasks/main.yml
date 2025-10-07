@@ -1,4 +1,12 @@
 ---
+- name: Проверка существования пользователя
+  user:
+    name: "{{ k8s_user }}"
+    state: present
+    groups: sudo
+    append: yes
+    shell: /bin/bash
+
 - name: Установка hostname
   hostname:
     name: "{{ inventory_hostname }}"
@@ -55,7 +63,11 @@
     path: "{{ item }}"
     state: directory
     mode: 0755
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
   loop:
+    - "{{ k8s_home }}/.kube"
+    - "{{ k8s_home }}/.local"
     - /etc/kubernetes
     - /etc/kubernetes/manifests
     - /var/lib/kubelet
@@ -64,6 +76,18 @@
     - "{{ offline_files_path }}"
     - "{{ packages_path }}"
     - "{{ images_path }}"
+
+- name: Настройка прав для пользователя на системные директории
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: 0755
+    owner: root
+    group: root
+  loop:
+    - /etc/kubernetes
+    - /var/lib/kubelet
+    - /var/lib/etcd
 
 - name: Перезагрузка системы (требуется для применения параметров ядра)
   reboot:

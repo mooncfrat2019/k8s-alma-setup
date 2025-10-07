@@ -10,32 +10,35 @@
 - name: Создание манифеста Calico
   template:
     src: calico.yaml.j2
-    dest: /root/calico.yaml
+    dest: "{{ k8s_home }}/calico.yaml"
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0644
   when: inventory_hostname == "master-node-1"
 
 - name: Применение Calico
-  command: kubectl apply -f /root/calico.yaml
+  command: kubectl apply -f "{{ k8s_home }}/calico.yaml"
   environment:
-    KUBECONFIG: /root/.kube/config
+    KUBECONFIG: "{{ k8s_home }}/.kube/config"
   when: inventory_hostname == "master-node-1"
 
 - name: Разрешение планирования подов на master узлах
   command: |
     kubectl taint nodes {{ inventory_hostname }} node-role.kubernetes.io/control-plane:NoSchedule-
   environment:
-    KUBECONFIG: /root/.kube/config
+    KUBECONFIG: "{{ k8s_home }}/.kube/config"
   ignore_errors: yes
 
 - name: Ожидание запуска Calico подов
   command: kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n calico-system --timeout=300s
   environment:
-    KUBECONFIG: /root/.kube/config
+    KUBECONFIG: "{{ k8s_home }}/.kube/config"
   when: inventory_hostname == "master-node-1"
 
 - name: Проверка состояния узлов
   command: kubectl get nodes -o wide
   environment:
-    KUBECONFIG: /root/.kube/config
+    KUBECONFIG: "{{ k8s_home }}/.kube/config"
   register: nodes_status
   changed_when: false
 
@@ -45,7 +48,7 @@
 - name: Проверка состояния подов
   command: kubectl get pods --all-namespaces -o wide
   environment:
-    KUBECONFIG: /root/.kube/config
+    KUBECONFIG: "{{ k8s_home }}/.kube/config"
   register: pods_status
   changed_when: false
 
@@ -54,4 +57,37 @@
 
 - name: Создание bash completion для kubectl
   lineinfile:
-    path:
+    path: "{{ k8s_home }}/.bashrc"
+    line: "source <(kubectl completion bash)"
+    state: present
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+
+- name: Создание алиасов для kubectl
+  copy:
+    content: |
+      alias k='kubectl'
+      alias kg='kubectl get'
+      alias kd='kubectl describe'
+      alias ka='kubectl apply -f'
+      alias klog='kubectl logs'
+    dest: "{{ k8s_home }}/.kubectl_aliases"
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0644
+
+- name: Загрузка алиасов в .bashrc
+  lineinfile:
+    path: "{{ k8s_home }}/.bashrc"
+    line: "source {{ k8s_home }}/.kubectl_aliases"
+    state: present
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+
+- name: Настройка прав для пользователя на kubectl config
+  file:
+    path: "{{ k8s_home }}/.kube"
+    state: directory
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    recurse: yes

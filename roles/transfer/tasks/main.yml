@@ -1,0 +1,91 @@
+---
+- name: Check if bundle file exists locally
+  stat:
+    path: "{{ playbook_dir }}/files/k8s-offline-bundle.tar.gz"
+  register: bundle_file
+  delegate_to: localhost
+  run_once: true
+
+- name: Fail if bundle file not found
+  fail:
+    msg: |
+      Bundle file not found: {{ playbook_dir }}/files/k8s-offline-bundle.tar.gz
+      
+      To create the bundle:
+      1. Run on machine with internet: ./scripts/prepare-offline-content.sh
+      2. Copy the generated k8s-offline-bundle-*.tar.gz to files/k8s-offline-bundle.tar.gz
+      3. Or specify custom path with 'bundle_path' variable
+  when: not bundle_file.stat.exists
+
+- name: Create transfer directory on remote hosts
+  file:
+    path: "/tmp/k8s-transfer"
+    state: directory
+    mode: 0755
+
+- name: Get bundle file info
+  stat:
+    path: "{{ playbook_dir }}/files/k8s-offline-bundle.tar.gz"
+  register: bundle_info
+  delegate_to: localhost
+  run_once: true
+
+- name: Display bundle information
+  debug:
+    msg: |
+      Transferring bundle: {{ bundle_info.stat.path }}
+      Size: {{ (bundle_info.stat.size / 1024 / 1024) | round(2) }} MB
+      MD5: {{ bundle_info.stat.md5 }}
+
+- name: Transfer bundle to remote hosts
+  copy:
+    src: "{{ playbook_dir }}/files/k8s-offline-bundle.tar.gz"
+    dest: "/tmp/k8s-transfer/k8s-offline-bundle.tar.gz"
+    mode: 0644
+  async: 300  # 5 minutes timeout
+  poll: 10    # check every 10 seconds
+
+- name: Verify transferred bundle
+  stat:
+    path: "/tmp/k8s-transfer/k8s-offline-bundle.tar.gz"
+  register: transferred_bundle
+
+- name: Show transfer verification
+  debug:
+    msg: "Bundle transferred successfully. Size: {{ (transferred_bundle.stat.size / 1024 / 1024) | round(2) }} MB"
+
+- name: Create extraction script
+  template:
+    src: extract-bundle.sh.j2
+    dest: "/tmp/k8s-transfer/extract-bundle.sh"
+    mode: 0755
+
+- name: Extract bundle on remote hosts
+  command: |
+    /tmp/k8s-transfer/extract-bundle.sh
+  args:
+    chdir: "/tmp/k8s-transfer"
+
+- name: Verify extracted content
+  stat:
+    path: "{{ item }}"
+  loop:
+    - "/opt/k8s-offline/files/packages"
+    - "/opt/k8s-offline/files/images"
+    - "/opt/k8s-offline/scripts"
+    - "/opt/k8s-offline/roles"
+  register: extracted_dirs
+
+- name: Show extraction results
+  debug:
+    msg: |
+      Extraction completed!
+      Packages: {{ lookup('fileglob', '/opt/k8s-offline/files/packages/*.deb') | length }}
+      Images: {{ lookup('fileglob', '/opt/k8s-offline/files/images/*.tar') | length }}
+      Scripts: {{ lookup('fileglob', '/opt/k8s-offline/scripts/*.sh') | length }}
+
+- name: Cleanup transfer directory (optional)
+  file:
+    path: "/tmp/k8s-transfer"
+    state: absent
+  when: cleanup_transfer | default(true) | bool

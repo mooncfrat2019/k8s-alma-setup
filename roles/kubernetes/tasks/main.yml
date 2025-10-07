@@ -27,31 +27,28 @@
 - name: Создание конфигурации kubeadm для первого мастера
   template:
     src: kubeadm-config.yaml.j2
-    dest: /root/kubeadm-config.yaml
+    dest: "/home/{{ k8s_user }}/kubeadm-config.yaml"
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0644
   when: inventory_hostname == "master-node-1"
 
 - name: Инициализация кластера на первом мастере
   command: |
-    kubeadm init --config /root/kubeadm-config.yaml --upload-certs
+    kubeadm init --config /home/{{ k8s_user }}/kubeadm-config.yaml --upload-certs
   args:
     creates: /etc/kubernetes/admin.conf
   when: inventory_hostname == "master-node-1"
 
 - name: Настройка kubectl для первого мастера
   block:
-    - name: Создание директории .kube
-      file:
-        path: /root/.kube
-        state: directory
-        mode: 0700
-
-    - name: Копирование конфигурации
+    - name: Копирование конфигурации для пользователя
       copy:
         src: /etc/kubernetes/admin.conf
-        dest: /root/.kube/config
+        dest: "{{ k8s_home }}/.kube/config"
         remote_src: yes
-        owner: root
-        group: root
+        owner: "{{ k8s_user }}"
+        group: "{{ k8s_group }}"
         mode: 0600
 
     - name: Получение команды join для control-plane
@@ -75,7 +72,9 @@
           Worker Join Command:
           kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} \
             --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }}
-        dest: /root/k8s-join-commands.txt
+        dest: "{{ k8s_home }}/k8s-join-commands.txt"
+        owner: "{{ k8s_user }}"
+        group: "{{ k8s_group }}"
         mode: 0600
 
     - name: Сохранение команд join в переменные
@@ -98,22 +97,18 @@
 
 - name: Настройка kubectl на других мастерах
   block:
-    - name: Создание директории .kube
-      file:
-        path: /root/.kube
-        state: directory
-        mode: 0700
-
     - name: Копирование конфигурации с первого мастера
       slurp:
-        src: /root/.kube/config
+        src: "{{ k8s_home }}/.kube/config"
       register: kubeconfig
       delegate_to: master-node-1
 
     - name: Запись конфигурации на текущий узел
       copy:
         content: "{{ kubeconfig.content | b64decode }}"
-        dest: /root/.kube/config
+        dest: "{{ k8s_home }}/.kube/config"
+        owner: "{{ k8s_user }}"
+        group: "{{ k8s_group }}"
         mode: 0600
   when:
     - inventory_hostname != "master-node-1"

@@ -120,7 +120,7 @@ download_with_apt_get() {
     done
 
     echo "📊 Apt-get method: $downloaded_count packages downloaded"
-    return $downloaded_count
+    # Не возвращаем код выхода, чтобы скрипт не прерывался
 }
 
 # Метод 2: Альтернативный метод - скачиваем в целевой директории
@@ -144,7 +144,6 @@ download_in_target_dir() {
 
     cd "$original_dir"
     echo "📊 Target directory method: $downloaded_count packages downloaded"
-    return $downloaded_count
 }
 
 # Метод 3: Прямое скачивание Kubernetes пакетов
@@ -191,7 +190,6 @@ download_kubernetes_direct() {
     fi
 
     echo "📊 Direct Kubernetes method: $downloaded_count packages downloaded"
-    return $downloaded_count
 }
 
 # Метод 4: Скачивание основных системных пакетов по прямым ссылкам
@@ -224,7 +222,6 @@ download_core_packages_direct() {
     done
 
     echo "📊 Direct core packages method: $downloaded_count packages downloaded"
-    return $downloaded_count
 }
 
 # Основной процесс
@@ -301,15 +298,18 @@ PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l || echo 0)
 if [ -z "$final_missing" ]; then
     echo "🎉 SUCCESS: All critical packages downloaded!"
     echo "📊 Total packages: $PACKAGE_COUNT"
-    exit 0
 else
     echo "❌ MISSING: $final_missing"
     echo "📊 Total packages downloaded: $PACKAGE_COUNT"
 
     if [ $PACKAGE_COUNT -gt 0 ]; then
         echo "⚠️  But we have $PACKAGE_COUNT packages, continuing..."
-        exit 0
     else
+        echo "❌ No packages were downloaded!"
         exit 1
     fi
 fi
+
+echo ""
+echo "🚀 Package download process completed!"
+exit 0

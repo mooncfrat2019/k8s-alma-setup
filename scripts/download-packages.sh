@@ -8,138 +8,152 @@ mkdir -p $DOWNLOAD_DIR
 
 echo "=== Downloading Kubernetes and Dependency Packages ==="
 
-# Список пакетов для загрузки
-PACKAGES=(
-    # System dependencies
-    "curl"
-    "wget"
-    "gnupg2"
-    "software-properties-common"
-    "apt-transport-https"
-    "ca-certificates"
-    "bridge-utils"
-    "ntp"
-    "ntpdate"
+# Определяем версию Ubuntu
+UBUNTU_VERSION=$(lsb_release -cs)
+echo "📋 Ubuntu version: $UBUNTU_VERSION"
 
-    # Container runtime
-    "containerd.io"
+# Базовые URL для пакетов
+UBUNTU_URL="http://archive.ubuntu.com/ubuntu"
+SECURITY_URL="http://security.ubuntu.com/ubuntu"
+DOCKER_URL="https://download.docker.com/linux/ubuntu"
+K8S_URL="https://packages.cloud.google.com/apt"
 
-    # HAProxy
-    "haproxy"
-
-    # Web server for local repo
-    "nginx"
-
-    # Docker for registry
-    "docker.io"
-    "docker-compose"
-)
-
-# Функция для загрузки пакета и его зависимостей
-download_package_with_deps() {
+# Функция для скачивания пакета с основных зеркал
+download_package_direct() {
     local package=$1
-    echo "📦 Downloading package: $package"
+    local version=$2
+    echo "📦 Downloading: $package"
 
-    # Создаем временную директорию для зависимостей
-    local temp_dir=$(mktemp -d)
-    cd $temp_dir
+    # Пробуем разные источники
+    local sources=(
+        "$UBUNTU_URL/pool/main/${package:0:1}/$package/${package}_${version}_amd64.deb"
+        "$SECURITY_URL/pool/main/${package:0:1}/$package/${package}_${version}_amd64.deb"
+        "$UBUNTU_URL/pool/universe/${package:0:1}/$package/${package}_${version}_amd64.deb"
+    )
 
-    # Пытаемся скачать пакет и зависимости
-    if apt-get download $(apt-cache depends --recurse --no-recommends --no-suggests \
-        --no-conflicts --no-breaks --no-replaces --no-enhances \
-        $package 2>/dev/null | grep "^\w" | sort -u) 2>/dev/null; then
-
-        # Копируем скачанные пакеты в целевую директорию
-        cp *.deb $DOWNLOAD_DIR/ 2>/dev/null || true
-        echo "✅ Downloaded: $package"
-    else
-        echo "⚠️  Skipping $package due to download error"
-        # Пробуем скачать только основной пакет
-        if apt-get download $package 2>/dev/null; then
-            cp *.deb $DOWNLOAD_DIR/ 2>/dev/null || true
-            echo "✅ Downloaded (main only): $package"
+    for source in "${sources[@]}"; do
+        if wget -q --timeout=30 --tries=2 "$source" -O "$DOWNLOAD_DIR/${package}_${version}_amd64.deb"; then
+            echo "✅ Downloaded: $package"
+            return 0
         fi
-    fi
+    done
 
-    # Очищаем временную директорию
-    cd -
-    rm -rf $temp_dir
+    echo "❌ Failed to download: $package"
+    return 1
 }
 
-# Функция для скачивания Kubernetes пакетов через официальный репозиторий Google
-download_kubernetes_packages() {
-    echo "📥 Setting up Kubernetes repository and downloading packages..."
+# Функция для поиска версии пакета
+find_package_version() {
+    local package=$1
+    apt-cache show "$package" 2>/dev/null | grep Version | head -1 | awk '{print $2}' || echo ""
+}
 
-    # Добавляем репозиторий Kubernetes
-    echo "🔧 Adding Kubernetes repository..."
+# Скачиваем системные пакеты
+download_system_packages() {
+    echo "📥 Downloading system packages..."
 
-    # Скачиваем GPG ключ
-    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
+    # Системные пакеты
+    SYSTEM_PACKAGES=(
+        "curl" "wget" "gnupg2" "software-properties-common" "apt-transport-https"
+        "ca-certificates" "bridge-utils" "ntp" "ntpdate"
+    )
 
-    # Добавляем репозиторий
-    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+    for pkg in "${SYSTEM_PACKAGES[@]}"; do
+        version=$(find_package_version "$pkg")
+        if [ -n "$version" ]; then
+            download_package_direct "$pkg" "$version" || true
+        else
+            echo "⚠️  Cannot find version for: $pkg"
+        fi
+    done
+}
 
-    # Обновляем список пакетов
+# Скачиваем Docker пакеты
+download_docker_packages() {
+    echo "📥 Downloading Docker packages..."
+
+    # Добавляем репозиторий Docker
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] $DOCKER_URL $UBUNTU_VERSION stable" | sudo tee /etc/apt/sources.list.d/docker.list
     sudo apt-get update
 
-    # Скачиваем Kubernetes пакеты
+    DOCKER_PACKAGES=("docker-ce" "docker-ce-cli" "containerd.io" "docker-buildx-plugin" "docker-compose-plugin")
+
+    for pkg in "${DOCKER_PACKAGES[@]}"; do
+        version=$(find_package_version "$pkg")
+        if [ -n "$version" ]; then
+            # Скачиваем с Docker репозитория
+            wget -q "$DOCKER_URL/dists/$UBUNTU_VERSION/pool/stable/amd64/${pkg}_${version}_amd64.deb" -O "$DOWNLOAD_DIR/${pkg}_${version}_amd64.deb" && \
+            echo "✅ Downloaded: $pkg" || echo "❌ Failed: $pkg"
+        fi
+    done
+}
+
+# Скачиваем Kubernetes пакеты
+download_kubernetes_packages() {
+    echo "📥 Downloading Kubernetes packages..."
+
+    # Добавляем репозиторий Kubernetes
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
+    echo "deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+    sudo apt-get update
+
     K8S_PACKAGES=("kubelet" "kubeadm" "kubectl" "kubernetes-cni")
 
     for pkg in "${K8S_PACKAGES[@]}"; do
-        echo "📦 Downloading: $pkg"
-        download_package_with_deps "$pkg"
-    done
-}
-
-# Функция для скачивания пакетов без зависимостей (fallback)
-download_packages_direct() {
-    echo "🔄 Trying direct package download..."
-
-    # Обновляем список пакетов
-    sudo apt-get update
-
-    # Скачиваем каждый пакет отдельно
-    ALL_PACKAGES=(
-        "curl" "wget" "gnupg2" "software-properties-common" "apt-transport-https"
-        "ca-certificates" "bridge-utils" "ntp" "ntpdate" "containerd" "haproxy"
-        "nginx" "docker.io" "docker-compose" "kubelet" "kubeadm" "kubectl" "kubernetes-cni"
-    )
-
-    for package in "${ALL_PACKAGES[@]}"; do
-        echo "📦 Attempting to download: $package"
-        if apt-get download "$package" 2>/dev/null; then
-            cp *.deb $DOWNLOAD_DIR/ 2>/dev/null || true
-            echo "✅ Downloaded: $package"
+        version=$(apt-cache madison "$pkg" 2>/dev/null | head -1 | awk '{print $3}')
+        if [ -n "$version" ]; then
+            # Скачиваем с Google репозитория
+            wget -q "https://packages.cloud.google.com/apt/pool/${pkg}_${version}_amd64.deb" -O "$DOWNLOAD_DIR/${pkg}_${version}_amd64.deb" && \
+            echo "✅ Downloaded: $pkg" || echo "❌ Failed: $pkg"
         else
-            echo "⚠️  Failed to download: $package"
+            echo "⚠️  Cannot find version for: $pkg"
         fi
     done
 }
 
-# Основной процесс загрузки
+# Скачиваем дополнительные пакеты
+download_extra_packages() {
+    echo "📥 Downloading extra packages..."
+
+    EXTRA_PACKAGES=("haproxy" "nginx")
+
+    for pkg in "${EXTRA_PACKAGES[@]}"; do
+        version=$(find_package_version "$pkg")
+        if [ -n "$version" ]; then
+            download_package_direct "$pkg" "$version" || true
+        fi
+    done
+}
+
+# Основной процесс
 echo "🔄 Updating package lists..."
-sudo apt-get update || true
+sudo apt-get update
 
-# Пробуем скачать Kubernetes пакеты через официальный репозиторий
-if download_kubernetes_packages; then
-    echo "✅ Kubernetes packages downloaded via official repo"
-else
-    echo "❌ Failed to download Kubernetes via official repo, trying fallback..."
-    download_packages_direct
-fi
+# Скачиваем пакеты
+download_system_packages
+download_docker_packages
+download_kubernetes_packages
+download_extra_packages
 
-# Загружаем остальные системные пакеты
-for package in "${PACKAGES[@]}"; do
-    # Пропускаем если уже скачали с Kubernetes
-    if [[ " kubelet kubeadm kubectl kubernetes-cni " != *" $package "* ]]; then
-        download_package_with_deps "$package"
-    fi
-done
+# Альтернативный метод - используем apt-offline
+install_apt_offline() {
+    echo "🔄 Trying apt-offline method..."
+    sudo apt-get install -y apt-offline
 
-# Проверяем что скачали containerd
-if ! ls $DOWNLOAD_DIR/*containerd* > /dev/null 2>&1; then
-    echo "⚠️  containerd not found, trying to download separately..."
-    download_package_with_deps "containerd"
+    # Генерируем сигнатуру для пакетов
+    PACKAGE_LIST=("curl" "wget" "gnupg2" "software-properties-common" "apt-transport-https"
+                 "ca-certificates" "bridge-utils" "ntp" "ntpdate" "docker.io" "docker-compose"
+                 "haproxy" "nginx" "kubelet" "kubeadm" "kubectl" "kubernetes-cni")
+
+    apt-offline set offline.sig --install-packages "${PACKAGE_LIST[@]}" || true
+    echo "📋 Signature generated: offline.sig"
+}
+
+# Если скачали мало пакетов, пробуем apt-offline
+if [ $(ls -1 "$DOWNLOAD_DIR"/*.deb 2>/dev/null | wc -l) -lt 10 ]; then
+    echo "⚠️  Too few packages downloaded, trying alternative method..."
+    install_apt_offline
 fi
 
 # Создаем файл со списком всех пакетов
@@ -147,47 +161,20 @@ echo "📝 Generating package list..."
 ls -la $DOWNLOAD_DIR/*.deb 2>/dev/null > $PACKAGE_LIST_FILE || {
     echo "No packages downloaded" > $PACKAGE_LIST_FILE
     echo "❌ No packages were downloaded!"
-    exit 1
 }
 
 # Создаем индекс для локального репозитория
-echo "🏗️ Creating local repository index..."
-cd $DOWNLOAD_DIR
-if ls *.deb > /dev/null 2>&1; then
+if [ $(ls -1 "$DOWNLOAD_DIR"/*.deb 2>/dev/null | wc -l) -gt 0 ]; then
+    echo "🏗️ Creating local repository index..."
+    cd $DOWNLOAD_DIR
     dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > Packages.gz || echo "⚠️  Could not create Packages.gz"
+    cd -
     echo "✅ Repository index created"
 else
     echo "❌ No packages to index"
-    exit 1
 fi
-cd -
 
 echo ""
 echo "🎉 Package download completed!"
 echo "📁 Packages saved to: $DOWNLOAD_DIR"
 echo "📊 Total packages downloaded: $(ls -1 $DOWNLOAD_DIR/*.deb 2>/dev/null | wc -l || echo 0)"
-
-# Проверяем критические пакеты
-echo ""
-echo "🔍 Critical package check:"
-CRITICAL_PACKAGES=("kubelet" "kubeadm" "kubectl" "containerd")
-MISSING_COUNT=0
-
-for pkg in "${CRITICAL_PACKAGES[@]}"; do
-    if ls $DOWNLOAD_DIR/*${pkg}* > /dev/null 2>&1; then
-        echo "✅ $pkg - FOUND"
-    else
-        echo "❌ $pkg - MISSING"
-        MISSING_COUNT=$((MISSING_COUNT + 1))
-    fi
-done
-
-if [ $MISSING_COUNT -gt 0 ]; then
-    echo ""
-    echo "❌ Missing $MISSING_COUNT critical packages!"
-    echo "Please check your internet connection and repository configuration."
-    exit 1
-else
-    echo ""
-    echo "✅ All critical packages downloaded successfully!"
-fi

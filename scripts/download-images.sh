@@ -4,7 +4,9 @@ set -e
 # Configuration
 DOWNLOAD_DIR="./files/packages"
 PACKAGE_LIST_FILE="./scripts/package-list.txt"
-mkdir -p $DOWNLOAD_DIR
+
+# Создаем директорию
+mkdir -p "$DOWNLOAD_DIR"
 
 # Выбираем версию Kubernetes
 K8S_VERSION="1.32.3"
@@ -79,7 +81,7 @@ add_repositories() {
     sudo apt-get update
 }
 
-# Метод 1: Простое скачивание пакетов
+# Метод 1: Простое скачивание пакетов БЕЗ временных директорий
 download_packages_simple() {
     echo "📦 Method 1: Simple package download..."
 
@@ -87,26 +89,12 @@ download_packages_simple() {
         if apt-cache show "$pkg" &>/dev/null; then
             echo "📥 Downloading: $pkg"
 
-            # Создаем временную директорию
-            TEMP_DIR=$(mktemp -d)
-            cd "$TEMP_DIR"
-
-            # Скачиваем пакет
-            if apt-get download "$pkg" 2>/dev/null; then
-                # Копируем скачанные пакеты
-                for deb_file in *.deb; do
-                    if [ -f "$deb_file" ]; then
-                        cp "$deb_file" "$DOWNLOAD_DIR"
-                        echo "✅ Downloaded: $deb_file"
-                    fi
-                done
+            # Скачиваем пакет напрямую в целевую директорию
+            if apt-get download "$pkg" -o Dir::Cache::archives="$DOWNLOAD_DIR" 2>/dev/null; then
+                echo "✅ Downloaded: $pkg"
             else
                 echo "⚠️  Failed to download: $pkg"
             fi
-
-            # Очистка
-            cd -
-            rm -rf "$TEMP_DIR"
         fi
     done
 }
@@ -181,6 +169,28 @@ download_core_packages() {
     done
 }
 
+# Метод 4: Альтернативный метод скачивания
+download_packages_alternative() {
+    echo "📦 Method 4: Alternative download method..."
+
+    # Переходим в целевую директорию и скачиваем там
+    cd "$DOWNLOAD_DIR"
+
+    for pkg in "${ALL_PACKAGES[@]}"; do
+        if apt-cache show "$pkg" &>/dev/null; then
+            echo "📥 Downloading: $pkg"
+            if apt-get download "$pkg" 2>/dev/null; then
+                echo "✅ Downloaded: $pkg"
+            else
+                echo "⚠️  Failed to download: $pkg"
+            fi
+        fi
+    done
+
+    # Возвращаемся назад
+    cd - > /dev/null
+}
+
 # Основной процесс
 echo "🔄 Setting up for Kubernetes $K8S_VERSION on Ubuntu 22.04..."
 
@@ -191,6 +201,7 @@ add_repositories
 download_packages_simple
 download_kubernetes_direct
 download_core_packages
+download_packages_alternative
 
 # Создаем индекс репозитория
 echo "🏗️ Creating local repository..."
@@ -208,7 +219,8 @@ ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "No packages downloaded"
 # Проверяем результаты
 echo ""
 echo "📊 Download Summary:"
-echo "📁 Packages downloaded: $(ls -1 *.deb 2>/dev/null | wc -l || echo 0)"
+PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l || echo 0)
+echo "📁 Packages downloaded: $PACKAGE_COUNT"
 echo "📋 Package list: $PACKAGE_LIST_FILE"
 
 # Проверяем критические пакеты

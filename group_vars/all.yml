@@ -20,7 +20,7 @@ registry_port: "5000"
 registry_url: "{{ registry_host }}:{{ registry_port }}"
 
 # Kubernetes configuration
-kubernetes_version: "1.34.0"  # Updated to the latest stable version
+kubernetes_version: "1.32.3"
 container_runtime: "containerd"
 cgroup_driver: "systemd"
 

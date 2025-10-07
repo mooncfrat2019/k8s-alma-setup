@@ -283,10 +283,10 @@ if ls *.deb > /dev/null 2>&1; then
     echo "✅ Repository index created"
 
     # Создаем список пакетов
-    ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "No package list generated" > "$PACKAGE_LIST_FILE"
+    #ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "No package list generated" > "$PACKAGE_LIST_FILE"
 else
     echo "❌ No packages to index"
-    echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
+    #echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
 fi
 
 # Финальная проверка и отчет

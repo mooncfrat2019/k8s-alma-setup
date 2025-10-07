@@ -1,8 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== Preparing Complete Offline Content for Kubernetes ==="
-echo "This script will download all packages and images needed for offline installation"
+echo "=== Preparing Complete Offline Content for Kubernetes $K8S_VERSION ==="
 
 # Colors for output
 RED='\033[0;31m'
@@ -10,48 +9,59 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Configuration
+K8S_VERSION="1.32.3"
+DOWNLOAD_DIR="./files"
+PACKAGES_DIR="$DOWNLOAD_DIR/packages"
+IMAGES_DIR="$DOWNLOAD_DIR/images"
+
+# Создаем директории
+mkdir -p $PACKAGES_DIR
+mkdir -p $IMAGES_DIR
+
 # Функция для проверки команд
 check_command() {
     if ! command -v $1 &> /dev/null; then
         echo -e "${RED}❌ Error: $1 is not installed${NC}"
-        echo "Please install: sudo apt-get install $1"
-        exit 1
+        return 1
     fi
+    return 0
 }
 
-# Функция для установки недостающих утилит
-install_prerequisites() {
-    echo "🔧 Installing prerequisites..."
-    sudo apt-get update || true
-    sudo apt-get install -y wget curl docker.io || true
+# Функция для установки Docker
+install_docker() {
+    echo "🔧 Installing Docker..."
+    sudo apt-get update
+    sudo apt-get install -y docker.io
+    sudo systemctl start docker
+    sudo systemctl enable docker
+    sudo usermod -aG docker $USER
+    echo "⚠️  Please log out and log back in for group changes to take effect, or run: newgrp docker"
 }
 
-# Проверяем и устанавливаем необходимые команды
+# Основной процесс
 echo "🔍 Checking prerequisites..."
-for cmd in wget curl docker; do
-    if ! command -v $cmd &> /dev/null; then
-        echo "⚠️  $cmd not found, attempting to install..."
-        install_prerequisites
-        break
+
+# Проверяем базовые утилиты
+for cmd in wget curl; do
+    if ! check_command "$cmd"; then
+        echo "📥 Installing $cmd..."
+        sudo apt-get update && sudo apt-get install -y $cmd
     fi
 done
 
-# Повторная проверка после установки
-check_command wget
-check_command curl
-
-# Проверяем Docker (не критично, но предупреждаем)
-if ! command -v docker &> /dev/null; then
-    echo -e "${YELLOW}⚠️  Docker not installed. Images won't be downloaded.${NC}"
-    echo "You can install Docker later or on another machine."
-    DOWNLOAD_IMAGES=false
-else
-    DOWNLOAD_IMAGES=true
+# Проверяем Docker
+if ! check_command "docker"; then
+    echo -e "${YELLOW}⚠️  Docker not found. Installing...${NC}"
+    install_docker
+    echo -e "${YELLOW}⚠️  Please run this script again after Docker installation${NC}"
+    exit 1
 fi
 
-# Создаем директории
-mkdir -p ./files/packages
-mkdir -p ./files/images
+if ! docker info &> /dev/null; then
+    echo -e "${YELLOW}⚠️  Docker daemon not running. Starting...${NC}"
+    sudo systemctl start docker
+fi
 
 # Загружаем пакеты
 echo ""
@@ -59,21 +69,17 @@ echo -e "${YELLOW}=== DOWNLOADING PACKAGES ===${NC}"
 if ./scripts/download-packages.sh; then
     echo -e "${GREEN}✅ Package download completed${NC}"
 else
-    echo -e "${RED}❌ Package download had errors, but continuing...${NC}"
+    echo -e "${RED}❌ Package download had errors${NC}"
+    echo "Continuing with image download..."
 fi
 
-# Загружаем образы только если Docker доступен
-if [ "$DOWNLOAD_IMAGES" = true ]; then
-    echo ""
-    echo -e "${YELLOW}=== DOWNLOADING DOCKER IMAGES ===${NC}"
-    if ./scripts/download-images.sh; then
-        echo -e "${GREEN}✅ Image download completed${NC}"
-    else
-        echo -e "${RED}❌ Image download had errors${NC}"
-    fi
+# Загружаем образы
+echo ""
+echo -e "${YELLOW}=== DOWNLOADING DOCKER IMAGES ===${NC}"
+if ./scripts/download-images.sh; then
+    echo -e "${GREEN}✅ Image download completed${NC}"
 else
-    echo ""
-    echo -e "${YELLOW}=== SKIPPING DOCKER IMAGES (Docker not available) ===${NC}"
+    echo -e "${RED}❌ Image download had errors${NC}"
 fi
 
 # Создаем архив для переноса
@@ -82,11 +88,8 @@ echo -e "${YELLOW}=== CREATING OFFLINE BUNDLE ===${NC}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BUNDLE_NAME="k8s-offline-bundle-${TIMESTAMP}.tar.gz"
 
-# Копируем как основной бандл для автоматического использования
-cp "$BUNDLE_NAME" "./files/k8s-offline-bundle.tar.gz" 2>/dev/null || true
-
 # Создаем архив
-if tar -czf $BUNDLE_NAME \
+tar -czf $BUNDLE_NAME \
     --exclude='*.tar' \
     --exclude='*.deb' \
     ./files/ \
@@ -94,68 +97,61 @@ if tar -czf $BUNDLE_NAME \
     ./inventory/ \
     ./group_vars/ \
     ./roles/ \
-    ./site.yml 2>/dev/null; then
+    ./site.yml \
+    ./ansible.cfg 2>/dev/null || true
 
-    # Создаем файл с информацией
-    cat > bundle-info.txt << EOF
+# Копируем как основной бандл
+cp "$BUNDLE_NAME" "./files/k8s-offline-bundle.tar.gz" 2>/dev/null || true
+
+# Создаем файл с информацией
+cat > "bundle-info.txt" << EOF
 Kubernetes Offline Bundle
 Created: $(date)
-Kubernetes Version: 1.34.0
-Calico Version: 3.26.0
-Contains:
-- $(find files/packages -name "*.deb" 2>/dev/null | wc -l) packages
-- $(find files/images -name "*.tar" 2>/dev/null | wc -l) docker images
+Kubernetes Version: $K8S_VERSION
+Calico Version: 3.27.2
+Bundle: $BUNDLE_NAME
 
-IMPORTANT: This bundle was created with some errors. Please verify contents.
+Contents:
+- $(find $PACKAGES_DIR -name "*.deb" 2>/dev/null | wc -l) packages
+- $(find $IMAGES_DIR -name "*.tar" 2>/dev/null | wc -l) Docker images
+- Complete Ansible playbook
 
 Usage:
-1. Extract bundle: tar -xzf $BUNDLE_NAME
-2. Prepare servers using Ansible playbook
+1. Extract: tar -xzf $BUNDLE_NAME
+2. Update inventory/hosts.yml with your server IPs
 3. Run: ansible-playbook -i inventory/hosts.yml site.yml
 
-Package List:
-$(find files/packages -name "*.deb" 2>/dev/null | xargs -n1 basename 2>/dev/null || echo "No packages found")
+Critical Packages Check:
+$(for pkg in kubelet kubeadm kubectl containerd docker.io; do
+    if find $PACKAGES_DIR -name "*${pkg}*" | grep -q .; then
+        echo "✅ $pkg"
+    else
+        echo "❌ $pkg"
+    fi
+done)
 
-Image List:
-$(find files/images -name "*.tar" 2>/dev/null | xargs -n1 basename 2>/dev/null || echo "No images found")
+Images Check:
+$(for img in kube-apiserver calico-node; do
+    if find $IMAGES_DIR -name "*${img}*" | grep -q .; then
+        echo "✅ $img"
+    else
+        echo "❌ $img"
+    fi
+done)
 EOF
 
-    echo ""
-    echo -e "${GREEN}🎉 Offline preparation completed!${NC}"
-    echo "📦 Bundle created: $BUNDLE_NAME"
-    echo "📦 Main bundle: files/k8s-offline-bundle.tar.gz"
-    echo "📋 Info file: bundle-info.txt"
-else
-    echo -e "${RED}❌ Failed to create bundle${NC}"
-    exit 1
-fi
-
 echo ""
-echo -e "${YELLOW}📊 Summary:${NC}"
-echo "   Packages: $(find files/packages -name "*.deb" 2>/dev/null | wc -l || echo 0)"
-echo "   Images: $(find files/images -name "*.tar" 2>/dev/null | wc -l || echo 0)"
+echo -e "${GREEN}🎉 Offline preparation completed!${NC}"
+echo "📦 Bundle created: $BUNDLE_NAME"
+echo "📦 Main bundle: files/k8s-offline-bundle.tar.gz"
+echo "📋 Info file: bundle-info.txt"
+
+# Финальная проверка
+echo ""
+echo -e "${YELLOW}📊 Final Summary:${NC}"
+echo "   Packages: $(find $PACKAGES_DIR -name "*.deb" 2>/dev/null | wc -l || echo 0)"
+echo "   Images: $(find $IMAGES_DIR -name "*.tar" 2>/dev/null | wc -l || echo 0)"
 echo "   Total size: $(du -sh $BUNDLE_NAME 2>/dev/null | cut -f1 || echo 'Unknown')"
-
-# Проверяем критически важные пакеты
-echo ""
-echo -e "${YELLOW}🔍 Critical package check:${NC}"
-CRITICAL_PACKAGES=("kubelet" "kubeadm" "kubectl" "containerd")
-MISSING_CRITICAL=0
-
-for pkg in "${CRITICAL_PACKAGES[@]}"; do
-    if find files/packages -name "*${pkg}*" | grep -q .; then
-        echo "✅ $pkg - FOUND"
-    else
-        echo -e "${RED}❌ $pkg - MISSING${NC}"
-        MISSING_CRITICAL=1
-    fi
-done
-
-if [ $MISSING_CRITICAL -eq 1 ]; then
-    echo ""
-    echo -e "${RED}🚨 CRITICAL: Some essential packages are missing!${NC}"
-    echo "You may need to download them manually or use a different approach."
-fi
 
 echo ""
 echo -e "${GREEN}🚀 Next steps:${NC}"

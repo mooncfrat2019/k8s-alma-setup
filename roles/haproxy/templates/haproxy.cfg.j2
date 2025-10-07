@@ -1,0 +1,34 @@
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    daemon
+    maxconn 4096
+
+defaults
+    log global
+    mode tcp
+    option tcplog
+    option dontlognull
+    retries 3
+    timeout connect 5000
+    timeout client 50000
+    timeout server 50000
+
+frontend k8s-api
+    bind {{ cluster_vip }}:6443
+    default_backend k8s-masters
+
+backend k8s-masters
+    balance roundrobin
+    option tcp-check
+    {% for host in groups['masters'] %}
+    server {{ host }} {{ master_ips[host] }}:6443 check fall 3 rise 2
+    {% endfor %}
+
+listen stats
+    bind *:8080
+    mode http
+    stats enable
+    stats uri /haproxy?stats
+    stats realm Haproxy\ Statistics
+    stats auth admin:password

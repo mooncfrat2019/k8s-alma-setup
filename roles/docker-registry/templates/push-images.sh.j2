@@ -1,0 +1,43 @@
+#!/bin/bash
+set -e
+
+REGISTRY="{{ registry_url }}"
+IMAGES_PATH="{{ images_path }}"
+
+echo "Загрузка образов в локальный registry: $REGISTRY"
+
+# Функция для загрузки и пуш образа
+push_image() {
+    local image_file=$1
+    local original_image=$(basename $image_file .tar | sed 's/_/:/' | sed 's/_/\//g')
+    local registry_image=$(echo $original_image | sed "s|.*/|$REGISTRY/|")
+
+    echo "Загрузка: $image_file"
+    echo "Оригинальный образ: $original_image"
+    echo "Registry образ: $registry_image"
+
+    # Загрузка образа
+    docker load -i $image_file
+
+    # Тегирование и пуш в registry
+    docker tag $original_image $registry_image
+    docker push $registry_image
+
+    # Очистка локальных образов
+    docker rmi $original_image $registry_image 2>/dev/null || true
+
+    echo "Успешно: $registry_image"
+    echo "---"
+}
+
+# Загрузка Kubernetes образов
+{% for image in k8s_images %}
+push_image "{{ images_path }}/{{ image | replace('/', '_') | replace(':', '_') }}.tar"
+{% endfor %}
+
+# Загрузка Calico образов
+{% for image in calico_images %}
+push_image "{{ images_path }}/{{ image | replace('/', '_') | replace(':', '_') }}.tar"
+{% endfor %}
+
+echo "Все образы успешно загружены в registry!"

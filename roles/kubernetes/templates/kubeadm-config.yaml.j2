@@ -1,0 +1,48 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "{{ master_ips[inventory_hostname] }}"
+  bindPort: 6443
+nodeRegistration:
+  criSocket: "unix:///var/run/containerd/containerd.sock"
+  taints: []
+  kubeletExtraArgs:
+    cgroup-driver: "{{ cgroup_driver }}"
+    pod-infra-container-image: "{{ registry_url }}/pause:3.9"
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: "v{{ kubernetes_version }}"
+controlPlaneEndpoint: "{{ cluster_vip }}:6443"
+apiServer:
+  certSANs:
+    - "{{ cluster_vip }}"
+    - "{{ cluster_domain }}"
+    {% for ip in master_ips.values() %}
+    - "{{ ip }}"
+    {% endfor %}
+    {% for host in groups['masters'] %}
+    - "{{ host }}"
+    {% endfor %}
+networking:
+  podSubnet: "{{ pod_network_cidr }}"
+  serviceSubnet: "{{ service_cidr }}"
+  dnsDomain: "cluster.local"
+etcd:
+  local:
+    dataDir: "/var/lib/etcd"
+    extraArgs:
+      listen-metrics-urls: "http://0.0.0.0:2381"
+imageRepository: "{{ registry_url }}"
+---
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: "{{ cgroup_driver }}"
+failSwapOn: false
+staticPodPath: /etc/kubernetes/manifests
+clusterDomain: "cluster.local"
+---
+apiVersion: kubeproxy.config.k8s.io/v1alpha1
+kind: KubeProxyConfiguration
+mode: "iptables"
+clusterCIDR: "{{ pod_network_cidr }}"

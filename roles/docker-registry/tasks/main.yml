@@ -1,0 +1,85 @@
+---
+- name: Установка Docker
+  apt-get:
+    name:
+      - docker.io
+      - docker-compose
+    state: present
+
+- name: Запуск и включение Docker
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Создание директории для registry
+  file:
+    path: /opt/docker-registry
+    state: directory
+    mode: 0755
+
+- name: Создание директории для данных registry
+  file:
+    path: /opt/docker-registry/data
+    state: directory
+    mode: 0755
+
+- name: Настройка Docker registry конфигурации
+  template:
+    src: registry-config.yml.j2
+    dest: /opt/docker-registry/docker-compose.yml
+    mode: 0644
+
+- name: Запуск Docker registry
+  community.docker.docker_compose:
+    project_src: /opt/docker-registry
+    state: present
+
+- name: Ожидание запуска registry
+  wait_for:
+    host: "{{ registry_host }}"
+    port: "{{ registry_port }}"
+    delay: 5
+    timeout: 30
+
+- name: Настройка незащищенного registry в Docker
+  copy:
+    content: |
+      {
+        "insecure-registries": ["{{ registry_url }}"]
+      }
+    dest: /etc/docker/daemon.json
+    mode: 0644
+
+- name: Перезагрузка Docker
+  systemd:
+    name: docker
+    state: restarted
+
+- name: Копирование образов на registry сервер
+  copy:
+    src: "{{ playbook_dir }}/files/images/"
+    dest: "{{ images_path }}"
+    mode: 0644
+
+- name: Создание скрипта для загрузки образов в registry
+  template:
+    src: push-images.sh.j2
+    dest: /opt/docker-registry/push-images.sh
+    mode: 0755
+
+- name: Загрузка образов в локальный registry
+  shell: |
+    cd /opt/docker-registry
+    ./push-images.sh
+  args:
+    executable: /bin/bash
+
+- name: Проверка загруженных образов
+  shell: |
+    curl -X GET http://{{ registry_url }}/v2/_catalog
+  register: registry_catalog
+  changed_when: false
+
+- debug:
+    msg: "Images in registry: {{ registry_catalog.stdout }}"

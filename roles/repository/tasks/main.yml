@@ -1,0 +1,76 @@
+---
+- name: Создание директорий для локального репозитория
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: 0755
+  loop:
+    - "{{ local_repo_path }}"
+
+- name: Копирование пакетов на целевые узлы
+  copy:
+    src: "{{ playbook_dir }}/files/packages/"
+    dest: "{{ packages_path }}"
+    mode: 0644
+
+- name: Установка nginx
+  apt-get:
+    name: nginx
+    state: present
+
+- name: Установка пакетов из локальной директории
+  apt-get:
+    deb: "{{ packages_path }}/{{ item }}"
+  loop: "{{ lookup('fileglob', playbook_dir + '/files/packages/*.deb') | map('basename') | list }}"
+  ignore_errors: yes
+
+- name: Создание локального репозитория
+  shell: |
+    cd {{ packages_path }}
+    dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz
+    cp -r {{ packages_path }}/* {{ local_repo_path }}/
+    cd {{ local_repo_path }}
+    dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz
+
+- name: Настройка nginx для локального репозитория
+  copy:
+    content: |
+      server {
+          listen 80;
+          server_name localhost;
+          root {{ local_repo_path }};
+          location / {
+              autoindex on;
+          }
+      }
+    dest: /etc/nginx/sites-available/k8s-repo
+    mode: 0644
+
+- name: Активация сайта nginx
+  file:
+    src: /etc/nginx/sites-available/k8s-repo
+    dest: /etc/nginx/sites-enabled/k8s-repo
+    state: link
+
+- name: Отключение дефолтного сайта nginx
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Запуск nginx
+  systemd:
+    name: nginx
+    state: started
+    enabled: yes
+
+- name: Добавление локального репозитория в sources.list
+  lineinfile:
+    path: /etc/apt/sources.list
+    line: "deb [trusted=yes] http://{{ hostvars[groups['local_repo'][0]]['ansible_host'] }}/k8s-repo ./"
+    state: present
+    backup: yes
+
+- name: Обновление списка пакетов
+  apt-get:
+    update_cache: yes
+    cache_valid_time: 3600

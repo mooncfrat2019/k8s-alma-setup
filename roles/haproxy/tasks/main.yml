@@ -1,0 +1,26 @@
+---
+- name: Установка HAProxy
+  apt-get:
+    name: haproxy
+    state: present
+
+- name: Настройка HAProxy
+  template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    backup: yes
+
+- name: Запуск и включение HAProxy
+  systemd:
+    name: haproxy
+    state: restarted
+    enabled: yes
+    daemon_reload: yes
+
+- name: Проверка статуса HAProxy
+  command: haproxy -v
+  register: haproxy_version
+  changed_when: false
+
+- debug:
+    msg: "HAProxy version: {{ haproxy_version.stdout }}"

@@ -1,0 +1,142 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: calico-system
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: calico-node
+  namespace: calico-system
+  labels:
+    k8s-app: calico-node
+spec:
+  selector:
+    matchLabels:
+      k8s-app: calico-node
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        k8s-app: calico-node
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      hostNetwork: true
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+        - effect: NoExecute
+          operator: Exists
+      serviceAccountName: calico-node
+      containers:
+        - name: calico-node
+          image: {{ registry_url }}/calico_node:v3.26.0
+          env:
+            - name: DATASTORE_TYPE
+              value: "kubernetes"
+            - name: WAIT_FOR_DATASTORE
+              value: "true"
+            - name: CALICO_NETWORKING_BACKend
+              value: "bird"
+            - name: CLUSTER_TYPE
+              value: "K8s,bgp"
+            - name: IP
+              value: "autodetect"
+            - name: IP_AUTODETECTION_METHOD
+              value: "first-found"
+            - name: CALICO_IPV4POOL_CIDR
+              value: "{{ pod_network_cidr }}"
+            - name: CALICO_IPV4POOL_IPIP
+              value: "Never"
+            - name: FELIX_IPINIPMTU
+              value: "1440"
+            - name: FELIX_VXLANMTU
+              value: "1440"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - mountPath: /host/etc/cni/net.d
+              name: cni-net-dir
+            - mountPath: /var/lib/calico
+              name: var-lib-calico
+            - mountPath: /var/run/calico
+              name: var-run-calico
+            - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              name: calico-node-token
+              readOnly: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "64Mi"
+      volumes:
+        - name: cni-net-dir
+          hostPath:
+            path: /etc/cni/net.d
+        - name: var-lib-calico
+          hostPath:
+            path: /var/lib/calico
+        - name: var-run-calico
+          hostPath:
+            path: /var/run/calico
+        - name: calico-node-token
+          secret:
+            secretName: calico-node-token
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: calico-kube-controllers
+  namespace: calico-system
+  labels:
+    k8s-app: calico-kube-controllers
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: calico-kube-controllers
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        k8s-app: calico-kube-controllers
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+        - effect: NoExecute
+          operator: Exists
+      serviceAccountName: calico-kube-controllers
+      containers:
+        - name: calico-kube-controllers
+          image: {{ registry_url }}/calico_kube-controllers:v3.26.0
+          env:
+            - name: ENABLED_CONTROLLERS
+              value: "node"
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "64Mi"
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: calico-node
+  namespace: calico-system
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: calico-kube-controllers
+  namespace: calico-system

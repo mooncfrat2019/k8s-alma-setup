@@ -1,0 +1,75 @@
+---
+- name: Установка hostname
+  hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Добавление записей в /etc/hosts
+  template:
+    src: hosts.j2
+    dest: /etc/hosts
+    backup: yes
+  when: inventory_hostname == "master-node-1"
+
+- name: Отключение swap
+  shell: |
+    swapoff -a
+    sed -i '/swap/d' /etc/fstab
+
+- name: Настройка timezone
+  timezone:
+    name: "{{ timezone }}"
+
+- name: Установка базовых пакетов
+  apt-get:
+    name: "{{ item }}"
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+  loop:
+    - curl
+    - wget
+    - gnupg2
+    - software-properties-common
+    - apt-transport-https
+    - ca-certificates
+    - bridge-utils
+    - ntp
+    - ntpdate
+
+- name: Настройка параметров ядра
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+    sysctl_set: yes
+  loop:
+    - { name: net.bridge.bridge-nf-call-ip6tables, value: 1 }
+    - { name: net.bridge.bridge-nf-call-iptables, value: 1 }
+    - { name: net.ipv4.ip_forward, value: 1 }
+    - { name: fs.inotify.max_user_watches, value: 524288 }
+    - { name: fs.inotify.max_user_instances, value: 512 }
+
+- name: Создание базовых директорий
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: 0755
+  loop:
+    - /etc/kubernetes
+    - /etc/kubernetes/manifests
+    - /var/lib/kubelet
+    - /var/lib/etcd
+    - /opt/cni/bin
+    - "{{ offline_files_path }}"
+    - "{{ packages_path }}"
+    - "{{ images_path }}"
+
+- name: Перезагрузка системы (требуется для применения параметров ядра)
+  reboot:
+    msg: "Reboot triggered by Ansible for kernel parameters"
+    connect_timeout: 5
+    reboot_timeout: 300
+    pre_reboot_delay: 0
+    post_reboot_delay: 30
+    test_command: uptime

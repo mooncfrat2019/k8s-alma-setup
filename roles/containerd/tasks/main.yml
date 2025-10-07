@@ -1,0 +1,26 @@
+---
+- name: Установка containerd
+  apt-get:
+    name: containerd
+    state: present
+
+- name: Создание конфигурации containerd
+  template:
+    src: containerd.conf.j2
+    dest: /etc/containerd/config.toml
+    backup: yes
+
+- name: Запуск и включение containerd
+  systemd:
+    name: containerd
+    state: started
+    enabled: yes
+    daemon_reload: yes
+
+- name: Проверка состояния containerd
+  command: containerd --version
+  register: containerd_version
+  changed_when: false
+
+- debug:
+    msg: "Containerd version: {{ containerd_version.stdout }}"

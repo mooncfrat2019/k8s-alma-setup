@@ -1,0 +1,57 @@
+---
+- name: Ожидание готовности API сервера
+  wait_for:
+    host: "{{ cluster_vip }}"
+    port: 6443
+    delay: 10
+    timeout: 300
+  delegate_to: localhost
+
+- name: Создание манифеста Calico
+  template:
+    src: calico.yaml.j2
+    dest: /root/calico.yaml
+  when: inventory_hostname == "master-node-1"
+
+- name: Применение Calico
+  command: kubectl apply -f /root/calico.yaml
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname == "master-node-1"
+
+- name: Разрешение планирования подов на master узлах
+  command: |
+    kubectl taint nodes {{ inventory_hostname }} node-role.kubernetes.io/control-plane:NoSchedule-
+  environment:
+    KUBECONFIG: /root/.kube/config
+  ignore_errors: yes
+
+- name: Ожидание запуска Calico подов
+  command: kubectl wait --for=condition=ready pod -l k8s-app=calico-node -n calico-system --timeout=300s
+  environment:
+    KUBECONFIG: /root/.kube/config
+  when: inventory_hostname == "master-node-1"
+
+- name: Проверка состояния узлов
+  command: kubectl get nodes -o wide
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: nodes_status
+  changed_when: false
+
+- debug:
+    msg: "{{ nodes_status.stdout }}"
+
+- name: Проверка состояния подов
+  command: kubectl get pods --all-namespaces -o wide
+  environment:
+    KUBECONFIG: /root/.kube/config
+  register: pods_status
+  changed_when: false
+
+- debug:
+    msg: "{{ pods_status.stdout }}"
+
+- name: Создание bash completion для kubectl
+  lineinfile:
+    path:

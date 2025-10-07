@@ -1,0 +1,58 @@
+---
+- name: Развертывание HA Kubernetes кластера с внутренним registry
+  hosts: all
+  become: yes
+  gather_facts: yes
+  pre_tasks:
+    - name: Обновление кэша фактов Ansible
+      setup:
+
+  roles:
+    - role: common
+      tags: common
+
+- name: Настройка Docker Registry
+  hosts: registry
+  become: yes
+  roles:
+    - role: docker-registry
+      tags: docker-registry
+
+- name: Настройка локального репозитория пакетов
+  hosts: local_repo
+  become: yes
+  roles:
+    - role: repository
+      tags: repository
+
+- name: Настройка основных компонентов
+  hosts: k8s_cluster
+  become: yes
+  roles:
+    - role: containerd
+      tags: containerd
+
+    - role: kubernetes
+      tags: kubernetes
+
+- name: Настройка HAProxy
+  hosts: haproxy
+  become: yes
+  roles:
+    - role: haproxy
+      tags: haproxy
+
+- name: Инициализация кластера Kubernetes
+  hosts: masters
+  become: yes
+  serial: 1
+  roles:
+    - role: kubernetes
+      tags: init
+
+- name: Пост-установочная настройка
+  hosts: masters
+  become: yes
+  roles:
+    - role: post-install
+      tags: post-install

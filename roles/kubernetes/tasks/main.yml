@@ -1,0 +1,120 @@
+---
+- name: Установка Kubernetes компонентов
+  apt-get:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - kubelet={{ kubernetes_version }}-00
+    - kubeadm={{ kubernetes_version }}-00
+    - kubectl={{ kubernetes_version }}-00
+
+- name: Запрет обновления пакетов Kubernetes
+  apt-get:
+    name: "{{ item }}"
+    state: held
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+
+- name: Запуск и включение kubelet
+  systemd:
+    name: kubelet
+    state: started
+    enabled: yes
+    daemon_reload: yes
+
+- name: Создание конфигурации kubeadm для первого мастера
+  template:
+    src: kubeadm-config.yaml.j2
+    dest: /root/kubeadm-config.yaml
+  when: inventory_hostname == "master-node-1"
+
+- name: Инициализация кластера на первом мастере
+  command: |
+    kubeadm init --config /root/kubeadm-config.yaml --upload-certs
+  args:
+    creates: /etc/kubernetes/admin.conf
+  when: inventory_hostname == "master-node-1"
+
+- name: Настройка kubectl для первого мастера
+  block:
+    - name: Создание директории .kube
+      file:
+        path: /root/.kube
+        state: directory
+        mode: 0700
+
+    - name: Копирование конфигурации
+      copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: yes
+        owner: root
+        group: root
+        mode: 0600
+
+    - name: Получение команды join для control-plane
+      command: kubeadm token create --print-join-command
+      register: join_command
+      changed_when: false
+
+    - name: Получение certificate key
+      command: kubeadm init phase upload-certs --upload-certs
+      register: cert_key
+      changed_when: false
+
+    - name: Сохранение команд join
+      copy:
+        content: |
+          Control Plane Join Command:
+          kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} \
+            --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }} \
+            --control-plane --certificate-key {{ cert_key.stdout.split()[3] }}
+
+          Worker Join Command:
+          kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} \
+            --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }}
+        dest: /root/k8s-join-commands.txt
+        mode: 0600
+
+    - name: Сохранение команд join в переменные
+      set_fact:
+        control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }} --control-plane --certificate-key {{ cert_key.stdout.split()[3] }}"
+        worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Ожидание инициализации первого мастера
+  wait_for:
+    path: /etc/kubernetes/admin.conf
+    state: present
+  when: inventory_hostname == "master-node-1"
+
+- name: Присоединение других мастер-узлов
+  command: "{{ hostvars['master-node-1']['control_plane_join_command'] }}"
+  when:
+    - inventory_hostname != "master-node-1"
+    - inventory_hostname in groups['masters']
+
+- name: Настройка kubectl на других мастерах
+  block:
+    - name: Создание директории .kube
+      file:
+        path: /root/.kube
+        state: directory
+        mode: 0700
+
+    - name: Копирование конфигурации с первого мастера
+      slurp:
+        src: /root/.kube/config
+      register: kubeconfig
+      delegate_to: master-node-1
+
+    - name: Запись конфигурации на текущий узел
+      copy:
+        content: "{{ kubeconfig.content | b64decode }}"
+        dest: /root/.kube/config
+        mode: 0600
+  when:
+    - inventory_hostname != "master-node-1"
+    - inventory_hostname in groups['masters']

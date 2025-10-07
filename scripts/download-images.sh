@@ -10,10 +10,10 @@ echo "=== Downloading Kubernetes and Calico Docker Images ==="
 
 # Список образов для загрузки (обновлен под Kubernetes 1.34.0)
 K8S_IMAGES=(
-    "registry.k8s.io/kube-apiserver:v1.34.0"
-    "registry.k8s.io/kube-controller-manager:v1.34.0"
-    "registry.k8s.io/kube-scheduler:v1.34.0"
-    "registry.k8s.io/kube-proxy:v1.34.0"
+    "registry.k8s.io/kube-apiserver:v1.32.0"
+    "registry.k8s.io/kube-controller-manager:v1.32.0"
+    "registry.k8s.io/kube-scheduler:v1.32.0"
+    "registry.k8s.io/kube-proxy:v1.32.0"
     "registry.k8s.io/pause:3.9"
     "registry.k8s.io/etcd:3.5.13-0"
     "registry.k8s.io/coredns/coredns:v1.11.3"

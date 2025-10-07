@@ -2,7 +2,7 @@
 set -e
 
 # Configuration
-DOWNLOAD_DIR="../files/packages"
+DOWNLOAD_DIR="./files/packages"
 PACKAGE_LIST_FILE="./scripts/package-list.txt"
 
 # Создаем директорию

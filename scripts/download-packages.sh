@@ -3,9 +3,9 @@ set -e
 
 # Configuration
 DOWNLOAD_DIR="./files/packages"
-PACKAGE_LIST_FILE="./scripts/package-list.txt"
+PACKAGE_LIST_FILE="$DOWNLOAD_DIR/package-list.txt"
 
-# Создаем директорию
+# Создаем необходимые директории
 mkdir -p "$DOWNLOAD_DIR"
 
 # Выбираем версию Kubernetes
@@ -26,7 +26,10 @@ echo "📋 Kubernetes version: $K8S_VERSION"
 
 K8S_MAJOR_MINOR=$(echo $K8S_VERSION | cut -d. -f1-2)
 
-# Полный список всех необходимых пакетов
+# Критически важные пакеты
+CRITICAL_PACKAGES=("kubelet" "kubeadm" "kubectl" "containerd" "docker.io" "kubernetes-cni")
+
+# Все пакеты
 ALL_PACKAGES=(
     # System utilities
     "curl"
@@ -81,9 +84,24 @@ add_repositories() {
     sudo apt-get update
 }
 
-# Метод 1: Простое скачивание пакетов БЕЗ временных директорий
-download_packages_simple() {
-    echo "📦 Method 1: Simple package download..."
+# Функция проверки скачанных пакетов
+check_downloaded_packages() {
+    local missing_packages=()
+
+    for pkg in "${CRITICAL_PACKAGES[@]}"; do
+        if ! ls "$DOWNLOAD_DIR"/*"$pkg"* > /dev/null 2>&1; then
+            missing_packages+=("$pkg")
+        fi
+    done
+
+    echo "${missing_packages[@]}"
+}
+
+# Метод 1: Основной метод через apt-get download
+download_with_apt_get() {
+    echo "📦 Method 1: Using apt-get download (primary method)..."
+
+    local downloaded_count=0
 
     for pkg in "${ALL_PACKAGES[@]}"; do
         if apt-cache show "$pkg" &>/dev/null; then
@@ -92,16 +110,48 @@ download_packages_simple() {
             # Скачиваем пакет напрямую в целевую директорию
             if apt-get download "$pkg" -o Dir::Cache::archives="$DOWNLOAD_DIR" 2>/dev/null; then
                 echo "✅ Downloaded: $pkg"
+                downloaded_count=$((downloaded_count + 1))
             else
                 echo "⚠️  Failed to download: $pkg"
             fi
+        else
+            echo "⚠️  Package not found in repository: $pkg"
         fi
     done
+
+    echo "📊 Apt-get method: $downloaded_count packages downloaded"
+    return $downloaded_count
 }
 
-# Метод 2: Прямое скачивание Kubernetes пакетов
+# Метод 2: Альтернативный метод - скачиваем в целевой директории
+download_in_target_dir() {
+    echo "📦 Method 2: Downloading in target directory (alternative method)..."
+
+    local original_dir=$(pwd)
+    cd "$DOWNLOAD_DIR"
+
+    local downloaded_count=0
+
+    for pkg in "${ALL_PACKAGES[@]}"; do
+        if apt-cache show "$pkg" &>/dev/null; then
+            echo "📥 Downloading: $pkg"
+            if apt-get download "$pkg" 2>/dev/null; then
+                echo "✅ Downloaded: $pkg"
+                downloaded_count=$((downloaded_count + 1))
+            fi
+        fi
+    done
+
+    cd "$original_dir"
+    echo "📊 Target directory method: $downloaded_count packages downloaded"
+    return $downloaded_count
+}
+
+# Метод 3: Прямое скачивание Kubernetes пакетов
 download_kubernetes_direct() {
-    echo "📦 Method 2: Direct Kubernetes package download..."
+    echo "📦 Method 3: Direct download of Kubernetes packages..."
+
+    local downloaded_count=0
 
     K8S_PACKAGES=(
         "kubelet"
@@ -113,11 +163,15 @@ download_kubernetes_direct() {
         filename="${pkg}_${K8S_VERSION}-1.1_amd64.deb"
         url="https://pkgs.k8s.io/core:/stable:/v${K8S_MAJOR_MINOR}/deb/amd64/${filename}"
 
-        echo "📥 Downloading: $pkg"
-        if wget -q --timeout=30 --tries=3 "$url" -O "$DOWNLOAD_DIR/$filename"; then
-            echo "✅ Downloaded: $pkg"
-        else
-            echo "❌ Failed: $pkg"
+        # Проверяем, не скачан ли уже пакет
+        if ! ls "$DOWNLOAD_DIR"/*"$pkg"* > /dev/null 2>&1; then
+            echo "📥 Downloading: $pkg"
+            if wget -q --timeout=30 --tries=3 "$url" -O "$DOWNLOAD_DIR/$filename"; then
+                echo "✅ Downloaded: $pkg"
+                downloaded_count=$((downloaded_count + 1))
+            else
+                echo "❌ Failed: $pkg"
+            fi
         fi
     done
 
@@ -126,69 +180,51 @@ download_kubernetes_direct() {
     CNI_PACKAGE="kubernetes-cni_${CNI_VERSION}-0.0~amd64.deb"
     CNI_URL="https://pkgs.k8s.io/core:/stable:/v${K8S_MAJOR_MINOR}/deb/amd64/${CNI_PACKAGE}"
 
-    echo "📥 Downloading: kubernetes-cni"
-    if wget -q --timeout=30 "$CNI_URL" -O "$DOWNLOAD_DIR/$CNI_PACKAGE"; then
-        echo "✅ Downloaded: kubernetes-cni"
-    else
-        echo "⚠️  Failed to download CNI plugins"
+    if ! ls "$DOWNLOAD_DIR"/*"kubernetes-cni"* > /dev/null 2>&1; then
+        echo "📥 Downloading: kubernetes-cni"
+        if wget -q --timeout=30 "$CNI_URL" -O "$DOWNLOAD_DIR/$CNI_PACKAGE"; then
+            echo "✅ Downloaded: kubernetes-cni"
+            downloaded_count=$((downloaded_count + 1))
+        else
+            echo "⚠️  Failed to download CNI plugins"
+        fi
     fi
+
+    echo "📊 Direct Kubernetes method: $downloaded_count packages downloaded"
+    return $downloaded_count
 }
 
-# Метод 3: Скачивание основных системных пакетов
-download_core_packages() {
-    echo "📦 Method 3: Downloading core system packages..."
+# Метод 4: Скачивание основных системных пакетов по прямым ссылкам
+download_core_packages_direct() {
+    echo "📦 Method 4: Direct download of core system packages..."
+
+    local downloaded_count=0
 
     # Основные пакеты с прямыми ссылками
     declare -A CORE_PACKAGES=(
-        ["curl"]="http://archive.ubuntu.com/ubuntu/pool/main/c/curl/curl_7.81.0-1ubuntu1.15_amd64.deb"
-        ["wget"]="http://archive.ubuntu.com/ubuntu/pool/main/w/wget/wget_1.21.2-2ubuntu1_amd64.deb"
-        ["gnupg2"]="http://archive.ubuntu.com/ubuntu/pool/main/g/gnupg2/gnupg2_2.2.27-3ubuntu2.1_amd64.deb"
-        ["software-properties-common"]="http://archive.ubuntu.com/ubuntu/pool/main/s/software-properties/software-properties-common_0.99.22.7_amd64.deb"
-        ["apt-transport-https"]="http://archive.ubuntu.com/ubuntu/pool/main/a/apt/apt-transport-https_2.4.9_amd64.deb"
-        ["ca-certificates"]="http://archive.ubuntu.com/ubuntu/pool/main/c/ca-certificates/ca-certificates_20211016ubuntu0.22.04.1_all.deb"
-        ["bridge-utils"]="http://archive.ubuntu.com/ubuntu/pool/main/b/bridge-utils/bridge-utils_1.7-1ubuntu1_amd64.deb"
         ["containerd"]="http://archive.ubuntu.com/ubuntu/pool/universe/c/containerd/containerd_1.6.12-0ubuntu1_amd64.deb"
         ["docker.io"]="http://archive.ubuntu.com/ubuntu/pool/universe/d/docker.io/docker.io_20.10.21-0ubuntu1_amd64.deb"
         ["haproxy"]="http://archive.ubuntu.com/ubuntu/pool/main/h/haproxy/haproxy_2.4.13-1ubuntu1_amd64.deb"
-        ["nginx"]="http://archive.ubuntu.com/ubuntu/pool/main/n/nginx/nginx_1.18.0-6ubuntu14.4_amd64.deb"
     )
 
     for pkg in "${!CORE_PACKAGES[@]}"; do
-        url="${CORE_PACKAGES[$pkg]}"
-        filename=$(basename "$url")
-
-        # Проверяем, не скачан ли уже пакет
+        # Скачиваем только если пакет еще не скачан и он критически важен
         if ! ls "$DOWNLOAD_DIR"/*"$pkg"* > /dev/null 2>&1; then
+            url="${CORE_PACKAGES[$pkg]}"
+            filename=$(basename "$url")
+
             echo "📥 Downloading: $pkg"
             if wget -q --timeout=30 --tries=3 "$url" -O "$DOWNLOAD_DIR/$filename"; then
                 echo "✅ Downloaded: $pkg"
+                downloaded_count=$((downloaded_count + 1))
             else
                 echo "❌ Failed: $pkg"
             fi
         fi
     done
-}
 
-# Метод 4: Альтернативный метод скачивания
-download_packages_alternative() {
-    echo "📦 Method 4: Alternative download method..."
-
-    # Переходим в целевую директорию и скачиваем там
-    cd "$DOWNLOAD_DIR"
-
-    for pkg in "${ALL_PACKAGES[@]}"; do
-        if apt-cache show "$pkg" &>/dev/null; then
-            echo "📥 Downloading: $pkg"
-            if apt-get download "$pkg" 2>/dev/null; then
-                echo "✅ Downloaded: $pkg"
-            else
-                echo "⚠️  Failed to download: $pkg"
-            fi
-        fi
-    done
-
-    # Возвращаемся назад
-    cd - > /dev/null
+    echo "📊 Direct core packages method: $downloaded_count packages downloaded"
+    return $downloaded_count
 }
 
 # Основной процесс
@@ -197,53 +233,88 @@ echo "🔄 Setting up for Kubernetes $K8S_VERSION on Ubuntu 22.04..."
 sudo apt-get update
 add_repositories
 
-# Пробуем методы по порядку
-download_packages_simple
-download_kubernetes_direct
-download_core_packages
-download_packages_alternative
+# Шаг 1: Пробуем основной метод
+echo ""
+echo "🚀 Step 1: Trying primary download method..."
+download_with_apt_get
+
+# Проверяем что скачалось
+missing_packages=$(check_downloaded_packages)
+if [ -z "$missing_packages" ]; then
+    echo "🎉 Primary method successful! All critical packages downloaded."
+else
+    echo "⚠️  Primary method incomplete. Missing: $missing_packages"
+
+    # Шаг 2: Пробуем альтернативный метод apt-get
+    echo ""
+    echo "🚀 Step 2: Trying alternative apt-get method..."
+    download_in_target_dir
+
+    # Проверяем снова
+    missing_packages=$(check_downloaded_packages)
+    if [ -z "$missing_packages" ]; then
+        echo "🎉 Alternative method successful! All critical packages downloaded."
+    else
+        echo "⚠️  Still missing: $missing_packages"
+
+        # Шаг 3: Пробуем прямые ссылки для Kubernetes
+        echo ""
+        echo "🚀 Step 3: Trying direct Kubernetes download..."
+        download_kubernetes_direct
+
+        # Проверяем снова
+        missing_packages=$(check_downloaded_packages)
+        if [ -z "$missing_packages" ]; then
+            echo "🎉 Kubernetes packages downloaded successfully!"
+        else
+            echo "⚠️  Still missing: $missing_packages"
+
+            # Шаг 4: Пробуем прямые ссылки для системных пакетов
+            echo ""
+            echo "🚀 Step 4: Trying direct system packages download..."
+            download_core_packages_direct
+        fi
+    fi
+fi
+
+# Финальная проверка
+echo ""
+echo "🔍 Final package check:"
+final_missing=$(check_downloaded_packages)
+if [ -z "$final_missing" ]; then
+    echo "🎉 SUCCESS: All critical packages downloaded!"
+else
+    echo "❌ MISSING: $final_missing"
+    echo "These packages need to be downloaded manually."
+fi
 
 # Создаем индекс репозитория
+echo ""
 echo "🏗️ Creating local repository..."
 cd "$DOWNLOAD_DIR"
 if ls *.deb > /dev/null 2>&1; then
     dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > Packages.gz
     echo "✅ Repository index created"
+
+    # Создаем список пакетов
+    ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "No package list generated" > "$PACKAGE_LIST_FILE"
 else
     echo "❌ No packages to index"
+    echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
 fi
 
-# Генерируем список пакетов
-ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
-
-# Проверяем результаты
+# Финальный отчет
 echo ""
 echo "📊 Download Summary:"
 PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l || echo 0)
-echo "📁 Packages downloaded: $PACKAGE_COUNT"
+echo "📁 Total packages downloaded: $PACKAGE_COUNT"
 echo "📋 Package list: $PACKAGE_LIST_FILE"
 
-# Проверяем критические пакеты
-echo ""
-echo "🔍 Critical package check:"
-CRITICAL_PACKAGES=("kubelet" "kubeadm" "kubectl" "containerd" "docker.io")
-MISSING_COUNT=0
-
-for pkg in "${CRITICAL_PACKAGES[@]}"; do
-    if ls *"$pkg"* > /dev/null 2>&1; then
-        echo "✅ $pkg - FOUND"
-    else
-        echo "❌ $pkg - MISSING"
-        MISSING_COUNT=$((MISSING_COUNT + 1))
-    fi
-done
-
-if [ $MISSING_COUNT -eq 0 ]; then
+if [ $PACKAGE_COUNT -gt 0 ]; then
     echo ""
-    echo "🎉 All critical packages downloaded successfully!"
     echo "🚀 Ready for offline installation!"
+    echo "To install packages: sudo dpkg -i $DOWNLOAD_DIR/*.deb"
 else
     echo ""
-    echo "⚠️  Missing $MISSING_COUNT critical packages"
-    echo "Some packages may need to be downloaded manually"
+    echo "❌ No packages were downloaded. Please check your internet connection and repositories."
 fi

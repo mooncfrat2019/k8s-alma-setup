@@ -42,8 +42,6 @@
     src: "{{ playbook_dir }}/files/k8s-offline-bundle.tar.gz"
     dest: "/tmp/k8s-transfer/k8s-offline-bundle.tar.gz"
     mode: 0644
-  async: 300  # 5 minutes timeout
-  poll: 10    # check every 10 seconds
 
 - name: Verify transferred bundle
   stat:

@@ -1,12 +1,18 @@
 ---
+- name: Check if transfer should be skipped
+  debug:
+    msg: "Skipping bundle transfer as skip_bundle_transfer is set to true"
+  when: skip_bundle_transfer | default(false) | bool
+
 - name: Check if bundle file exists locally
   stat:
     path: "{{ playbook_dir }}/files/k8s-offline-bundle.tar.gz"
   register: bundle_file
   delegate_to: localhost
   run_once: true
+  when: not (skip_bundle_transfer | default(false) | bool)
 
-- name: Fail if bundle file not found
+- name: Fail if bundle file not found and transfer not skipped
   fail:
     msg: |
       Bundle file not found: {{ playbook_dir }}/files/k8s-offline-bundle.tar.gz
@@ -15,13 +21,18 @@
       1. Run on machine with internet: ./scripts/prepare-offline-content.sh
       2. Copy the generated k8s-offline-bundle-*.tar.gz to files/k8s-offline-bundle.tar.gz
       3. Or specify custom path with 'bundle_path' variable
-  when: not bundle_file.stat.exists
+      
+      If bundle is already on target servers, use: -e "skip_bundle_transfer=true"
+  when:
+    - not bundle_file.stat.exists
+    - not (skip_bundle_transfer | default(false) | bool)
 
 - name: Create transfer directory on remote hosts
   file:
     path: "/tmp/k8s-transfer"
     state: directory
     mode: 0755
+  when: not (skip_bundle_transfer | default(false) | bool)
 
 - name: Get bundle file info
   stat:
@@ -29,6 +40,7 @@
   register: bundle_info
   delegate_to: localhost
   run_once: true
+  when: not (skip_bundle_transfer | default(false) | bool)
 
 - name: Display bundle information
   debug:
@@ -36,21 +48,42 @@
       Transferring bundle: {{ bundle_info.stat.path }}
       Size: {{ (bundle_info.stat.size / 1024 / 1024) | round(2) }} MB
       Exists: {{ bundle_info.stat.exists }}
+  when: not (skip_bundle_transfer | default(false) | bool)
 
 - name: Transfer bundle to remote hosts
   copy:
     src: "{{ playbook_dir }}/files/k8s-offline-bundle.tar.gz"
     dest: "/tmp/k8s-transfer/k8s-offline-bundle.tar.gz"
     mode: 0644
+  async: 300  # 5 minutes timeout
+  poll: 10    # check every 10 seconds
+  when: not (skip_bundle_transfer | default(false) | bool)
 
 - name: Verify transferred bundle
   stat:
     path: "/tmp/k8s-transfer/k8s-offline-bundle.tar.gz"
   register: transferred_bundle
+  when: not (skip_bundle_transfer | default(false) | bool)
 
 - name: Show transfer verification
   debug:
     msg: "Bundle transferred successfully. Size: {{ (transferred_bundle.stat.size / 1024 / 1024) | round(2) }} MB"
+  when:
+    - not (skip_bundle_transfer | default(false) | bool)
+    - transferred_bundle.stat.exists
+
+- name: Check if bundle already exists on remote (when skipping transfer)
+  stat:
+    path: "/tmp/k8s-transfer/k8s-offline-bundle.tar.gz"
+  register: existing_bundle
+  when: skip_bundle_transfer | default(false) | bool
+
+- name: Warn if no bundle found when skipping transfer
+  debug:
+    msg: "⚠️  skip_bundle_transfer is true but no bundle found at /tmp/k8s-transfer/k8s-offline-bundle.tar.gz"
+  when:
+    - skip_bundle_transfer | default(false) | bool
+    - not existing_bundle.stat.exists
 
 - name: Create extraction script
   template:
@@ -68,10 +101,10 @@
   stat:
     path: "{{ item }}"
   loop:
-    - "/opt/k8s-offline/files/packages"
-    - "/opt/k8s-offline/files/images"
-    - "/opt/k8s-offline/scripts"
-    - "/opt/k8s-offline/roles"
+    - "{{ k8s_home }}/k8s-offline/files/packages"
+    - "{{ k8s_home }}/k8s-offline/files/images"
+    - "{{ k8s_home }}/k8s-offline/scripts"
+    - "{{ k8s_home }}/k8s-offline/roles"
   register: extracted_dirs
 
 - name: Show extraction results
@@ -85,12 +118,12 @@
 
 - name: Check package count
   shell: |
-    find /opt/k8s-offline/files/packages -name "*.deb" 2>/dev/null | wc -l || echo 0
+    find {{ k8s_home }}/k8s-offline/files/packages -name "*.deb" 2>/dev/null | wc -l || echo 0
   register: package_count
 
 - name: Check image count
   shell: |
-    find /opt/k8s-offline/files/images -name "*.tar" 2>/dev/null | wc -l || echo 0
+    find {{ k8s_home }}/k8s-offline/files/images -name "*.tar" 2>/dev/null | wc -l || echo 0
   register: image_count
 
 - name: Show final counts

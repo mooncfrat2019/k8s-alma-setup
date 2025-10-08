@@ -82,55 +82,10 @@
   debug:
     msg: "Images in Docker: {{ docker_images.stdout }}"
 
-- name: Создание простого скрипта для загрузки образов
-  copy:
+- name: Создание скрипта для загрузки образов через шаблон
+  template:
+    src: push-images.sh.j2
     dest: /opt/docker-registry/push-images.sh
-    content: |
-      #!/bin/bash
-      set -x
-      
-      REGISTRY="{{ '{{' }} registry_url {{ '}}' }}"
-      IMAGES_DIR="{{ '{{' }} k8s_home {{ '}}' }}/k8s-offline/files/images"
-      
-      echo "=== Step 1: Loading all images ==="
-      for tar_file in $IMAGES_DIR/*.tar; do
-          if [ -f "$tar_file" ]; then
-              echo "Loading: $tar_file"
-              docker load -i "$tar_file"
-          fi
-      done
-      
-      echo "=== Step 2: Listing all loaded images ==="
-      docker images
-      
-      echo "=== Step 3: Tagging and pushing images ==="
-      # Используем другой способ получения образов без фигурных скобок
-      docker images --no-trunc | grep -v "<none>" | while read line; do
-          repository=$(echo "$line" | awk '{print $1}')
-          tag=$(echo "$line" | awk '{print $2}')
-          if [ "$repository" != "REPOSITORY" ] && [ -n "$repository" ] && [ "$repository" != "<none>" ]; then
-              echo "Processing: $repository:$tag"
-      
-              # Create new tag
-              if [[ "$repository" == *"/"* ]]; then
-                  new_name=$(echo $repository | cut -d'/' -f2-)
-              else
-                  new_name=$repository
-              fi
-      
-              new_tag="$REGISTRY/$new_name:$tag"
-              echo "Tagging: $repository:$tag -> $new_tag"
-              docker tag "$repository:$tag" "$new_tag"
-      
-              echo "Pushing: $new_tag"
-              docker push "$new_tag"
-      
-              echo "Done: $new_tag"
-          fi
-      done
-      
-      echo "=== Step 4: Final check ==="
-      curl -s http://$REGISTRY/v2/_catalog
     mode: 0755
 
 - name: Загрузка образов в локальный registry
@@ -140,6 +95,7 @@
   args:
     executable: /bin/bash
   register: push_result
+  ignore_errors: yes
 
 - name: Показать результат загрузки
   debug:

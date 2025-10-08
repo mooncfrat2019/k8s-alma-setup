@@ -89,8 +89,8 @@
       #!/bin/bash
       set -x
       
-      REGISTRY="{{ registry_url }}"
-      IMAGES_DIR="{{ k8s_home }}/k8s-offline/files/images"
+      REGISTRY="{{ '{{' }} registry_url {{ '}}' }}"
+      IMAGES_DIR="{{ '{{' }} k8s_home {{ '}}' }}/k8s-offline/files/images"
       
       echo "=== Step 1: Loading all images ==="
       for tar_file in $IMAGES_DIR/*.tar; do
@@ -104,9 +104,11 @@
       docker images
       
       echo "=== Step 3: Tagging and pushing images ==="
-      # Get all image IDs except <none>
-      docker images --no-trunc --format "{{.ID}} {{.Repository}} {{.Tag}}" | while read id repository tag; do
-          if [ "$repository" != "<none>" ] && [ "$tag" != "<none>" ]; then
+      # Используем другой способ получения образов без фигурных скобок
+      docker images --no-trunc | grep -v "<none>" | while read line; do
+          repository=$(echo "$line" | awk '{print $1}')
+          tag=$(echo "$line" | awk '{print $2}')
+          if [ "$repository" != "REPOSITORY" ] && [ -n "$repository" ] && [ "$repository" != "<none>" ]; then
               echo "Processing: $repository:$tag"
       
               # Create new tag
@@ -152,13 +154,3 @@
 - name: Показать финальный результат
   debug:
     msg: "Final registry catalog: {{ registry_catalog.stdout }}"
-
-- name: Проверка что registry хранит данные
-  shell: |
-    find /opt/docker-registry/data -type f -name "manifest" | head -5
-  register: registry_data
-  ignore_errors: yes
-
-- name: Показать данные registry
-  debug:
-    msg: "Registry data files: {{ registry_data.stdout }}"

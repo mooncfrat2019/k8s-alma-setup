@@ -85,6 +85,16 @@
         state: present
       loop: "{{ missing_packages }}"
       when: missing_packages | length > 0
+      ignore_errors: yes  # Игнорируем ошибки при установке из интернета
+      register: internet_install
+      failed_when: false  # Никогда не считать эту задачу проваленной
+
+    - name: Показать результат установки из интернета
+      debug:
+        msg: "Результат установки пакета {{ item.item }}: {{ item.failed | default(false) }}"
+      loop: "{{ internet_install.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
 
   rescue:
     - name: Установка всех пакетов из интернета (fallback)
@@ -106,6 +116,16 @@
         - ntpdate
         - which
         - sudo
+      ignore_errors: yes  # Игнорируем ошибки при установке из интернета
+      register: fallback_install
+      failed_when: false  # Никогда не считать эту задачу проваленной
+
+    - name: Показать результат fallback установки
+      debug:
+        msg: "Fallback установка пакета {{ item.item }}: {{ item.failed | default(false) }}"
+      loop: "{{ fallback_install.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
 
 - name: Настройка параметров ядра
   sysctl:

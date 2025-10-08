@@ -134,12 +134,15 @@
     state: present
     reload: yes
     sysctl_set: yes
+    ignoreerrors: yes
   loop:
     - { name: net.bridge.bridge-nf-call-ip6tables, value: 1 }
     - { name: net.bridge.bridge-nf-call-iptables, value: 1 }
     - { name: net.ipv4.ip_forward, value: 1 }
     - { name: fs.inotify.max_user_watches, value: 524288 }
     - { name: fs.inotify.max_user_instances, value: 512 }
+  ignore_errors: yes
+  failed_when: false
 
 - name: Создание базовых директорий
   file:

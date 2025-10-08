@@ -4,18 +4,24 @@
     name: "{{ item }}"
     state: present
   loop:
-    - kubelet={{ kubernetes_version }}-00
-    - kubeadm={{ kubernetes_version }}-00
-    - kubectl={{ kubernetes_version }}-00
+    - kubernetes1.28-client
+    - kubernetes1.28-kubeadm
+    - kubernetes1.28-kubelet
+    - kubernetes1.28-master
+    - kubernetes1.28-node
+    - kubernetes1.28-common
+    - kubernetes1.28-crio
+    - python3-module-kubernetes-client
+    - kube-vip
 
-- name: Запрет обновления пакетов Kubernetes
-  apt:
-    name: "{{ item }}"
-    state: held
-  loop:
-    - kubelet
-    - kubeadm
-    - kubectl
+#- name: Запрет обновления пакетов Kubernetes
+#  apt:
+#    name: "{{ item }}"
+#    state: held
+#  loop:
+#    - kubelet
+#    - kubeadm
+#    - kubectl
 
 - name: Запуск и включение kubelet
   systemd:

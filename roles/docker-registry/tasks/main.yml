@@ -30,10 +30,22 @@
     dest: /opt/docker-registry/docker-compose.yml
     mode: 0644
 
-- name: Запуск Docker registry
-  community.docker.docker_compose:
-    project_src: /opt/docker-registry
-    state: present
+- name: Остановка существующего registry контейнера
+  shell: |
+    cd /opt/docker-registry
+    docker-compose down || true
+  args:
+    executable: /bin/bash
+  ignore_errors: yes
+
+- name: Запуск Docker registry через docker-compose
+  shell: |
+    cd /opt/docker-registry
+    docker-compose up -d
+  args:
+    executable: /bin/bash
+  register: compose_result
+  failed_when: compose_result.rc != 0
 
 - name: Ожидание запуска registry
   wait_for:
@@ -55,6 +67,13 @@
   systemd:
     name: docker
     state: restarted
+
+- name: Ожидание перезапуска Docker
+  wait_for:
+    host: "{{ registry_host }}"
+    port: "{{ registry_port }}"
+    delay: 10
+    timeout: 60
 
 - name: Копирование образов на registry сервер
   copy:

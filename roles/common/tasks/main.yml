@@ -35,22 +35,25 @@
 
 - name: Установка базовых пакетов для ALT Linux из офлайн-источника с fallback на интернет
   block:
-    - name: Установка доступных пакетов из офлайн-директории
+    - name: Установка всех пакетов из офлайн-директории
       shell: |
-        set +e
-        for deb in {{ k8s_home }}/k8s-offline/files/packages/*.deb; do
-          if [ -f "$deb" ]; then
-            echo "Устанавливаю пакет: $deb"
-            dpkg -i "$deb" || apt-get install -f -y
-          fi
-        done
-        set -e
+        # Создаем временный локальный репозиторий
+        cd {{ k8s_home }}/k8s-offline/files/packages
+        dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz
+
+        # Добавляем в sources.list
+        echo "deb [trusted=yes] file:{{ k8s_home }}/k8s-offline/files/packages ./" > /etc/apt/sources.list.d/local-offline.list
+
+        # Обновляем и устанавливаем все доступные пакеты
+        apt-get update
+        apt-get install -y ./*
       args:
         executable: /bin/bash
       when:
         - offline_packages_dir is defined
         - offline_packages_dir.stat is defined
         - offline_packages_dir.stat.exists
+      ignore_errors: yes
 
     - name: Получение списка установленных пакетов
       shell: |

@@ -15,5 +15,5 @@ ansible-playbook -i inventory/hosts.yml site.yml -e '{
   "host_3": "89.208.228.216",
   "host_registry": "89.208.208.139",
   "skip_bundle_transfer": true,
-  "need_restart": true
+  "need_restart": false
 }' --tags common

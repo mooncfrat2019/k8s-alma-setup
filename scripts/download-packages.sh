@@ -385,18 +385,23 @@ if ls *.deb > /dev/null 2>&1; then
     dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > Packages.gz
     echo "✅ Repository index created"
 
-    # Создаем список пакетов
+    # Создаем список пакетов - используем относительный путь от текущей директории
     echo "📋 Creating package list..."
-    ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "Package list generation completed" > "$PACKAGE_LIST_FILE"
+    ls -la *.deb > "package-list.txt" 2>/dev/null || echo "Package list generation completed" > "package-list.txt"
 
     # Добавляем информацию о количестве пакетов
     PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l)
-    echo "Total packages: $PACKAGE_COUNT" >> "$PACKAGE_LIST_FILE"
-    echo "Main packages: ${ALL_PACKAGES[*]}" >> "$PACKAGE_LIST_FILE"
+    {
+        echo "Total packages: $PACKAGE_COUNT"
+        echo "Main packages: ${ALL_PACKAGES[*]}"
+    } >> "package-list.txt"
 else
     echo "❌ No packages to index"
-    echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
+    echo "No packages downloaded" > "package-list.txt"
 fi
+
+# Возвращаемся в исходную директорию для остальных операций
+cd - > /dev/null
 
 # Финальная проверка и отчет
 echo ""

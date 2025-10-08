@@ -1,4 +1,69 @@
 ---
+- name: Установка containerd из локального rpm пакета
+  block:
+    - name: Копирование rpm пакета containerd на сервер
+      copy:
+        src: "files/packages/containerd-2.1.4-alt1.x86_64.rpm"
+        dest: /tmp/containerd.rpm
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Установка containerd через apt-get
+      shell: apt-get install -y /tmp/containerd.rpm
+      become: yes
+
+    - name: Очистка временного файла
+      file:
+        path: /tmp/containerd.rpm
+        state: absent
+      become: yes
+
+    - name: Создание базового конфига containerd
+      copy:
+        content: |
+          version = 2
+          root = "/var/lib/containerd"
+          state = "/run/containerd"
+          [grpc]
+            address = "/run/containerd/containerd.sock"
+          [plugins]
+            [plugins."io.containerd.grpc.v1.cri"]
+              sandbox_image = "{{ registry_url }}/pause:3.9"
+              [plugins."io.containerd.grpc.v1.cri".containerd]
+                snapshotter = "overlayfs"
+                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+                  runtime_type = "io.containerd.runc.v2"
+                  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+                    SystemdCgroup = true
+        dest: /etc/containerd/config.toml
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Включение и запуск containerd
+      systemd:
+        name: containerd
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      become: yes
+
+    - name: Ожидание готовности containerd
+      wait_for:
+        path: /var/run/containerd/containerd.sock
+        state: file
+        timeout: 30
+      become: yes
+
+    - name: Проверка работы containerd
+      command: crictl version
+      register: containerd_check
+      changed_when: false
+      failed_when: containerd_check.rc != 0
+
 - name: Установка crictl
   block:
     - name: Копирование и распаковка crictl

@@ -54,7 +54,7 @@
     - name: Ожидание готовности containerd
       wait_for:
         path: /var/run/containerd/containerd.sock
-        state: file
+        state: present
         timeout: 30
       become: yes
 

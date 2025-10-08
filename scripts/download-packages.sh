@@ -379,16 +379,16 @@ if ls *.deb > /dev/null 2>&1; then
     echo "✅ Repository index created"
 
     # Создаем список пакетов с зависимостями
-    echo "📋 Creating package list..."
-    ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "Package list generation completed" > "$PACKAGE_LIST_FILE"
+    #echo "📋 Creating package list..."
+    #ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "Package list generation completed" > "$PACKAGE_LIST_FILE"
 
     # Добавляем информацию о количестве пакетов
-    PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l)
-    echo "Total packages: $PACKAGE_COUNT" >> "$PACKAGE_LIST_FILE"
-    echo "Main packages: ${ALL_PACKAGES[*]}" >> "$PACKAGE_LIST_FILE"
+    #PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l)
+    #echo "Total packages: $PACKAGE_COUNT" >> "$PACKAGE_LIST_FILE"
+    #echo "Main packages: ${ALL_PACKAGES[*]}" >> "$PACKAGE_LIST_FILE"
 else
     echo "❌ No packages to index"
-    echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
+    #echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
 fi
 
 # Финальная проверка и отчет

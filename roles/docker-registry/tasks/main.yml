@@ -2,7 +2,7 @@
 - name: Установка Docker
   apt:
     name:
-      - docker.io
+      - docker-engine
       - docker-compose
     state: present
 

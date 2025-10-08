@@ -36,7 +36,8 @@ check_directory() {
     local dir=$1
     local desc=$2
     if [ -d "$dir" ] && [ "$(ls -A $dir 2>/dev/null)" ]; then
-        echo "✅ $desc: $(find $dir -type f | wc -l) files"
+        local file_count=$(find "$dir" -type f 2>/dev/null | wc -l || echo 0)
+        echo "✅ $desc: $file_count files"
         return 0
     else
         echo "❌ $desc: MISSING OR EMPTY"

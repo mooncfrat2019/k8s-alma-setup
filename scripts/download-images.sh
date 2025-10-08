@@ -10,7 +10,7 @@ mkdir -p "$(dirname "$IMAGE_LIST_FILE")"
 echo "=== Downloading Kubernetes and Calico Docker Images ==="
 
 # Версии совместимые с Kubernetes 1.32.3
-K8S_VERSION="1.32.3"
+K8S_VERSION="1.28.15"
 CALICO_VERSION="3.27.2"  # Совместим с k8s 1.32
 
 # Kubernetes images

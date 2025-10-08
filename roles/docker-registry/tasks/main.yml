@@ -73,7 +73,7 @@
     host: "{{ registry_host }}"
     port: "{{ registry_port }}"
     delay: 10
-    timeout: 10
+    timeout: 50
 
 - name: Создание скрипта для загрузки образов в registry
   template:

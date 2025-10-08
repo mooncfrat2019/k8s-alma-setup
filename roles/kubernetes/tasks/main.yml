@@ -1,18 +1,23 @@
 ---
-- name: Установка Kubernetes компонентов
-  apt:
-    name: "{{ item }}"
-    state: present
-  loop:
-    - kubernetes1.28-client
-    - kubernetes1.28-kubeadm
-    - kubernetes1.28-kubelet
-    - kubernetes1.28-master
-    - kubernetes1.28-node
-    - kubernetes1.28-common
-    - kubernetes1.28-crio
-    - python3-module-kubernetes-client
-    - kube-vip
+- name: Обновление apt cache
+  shell: apt-get update
+  become: yes
+
+- name: Установка Kubernetes компонентов через shell
+  shell: |
+    apt-get install -y \
+      kubernetes1.28-client \
+      kubernetes1.28-kubeadm \
+      kubernetes1.28-kubelet \
+      kubernetes1.28-master \
+      kubernetes1.28-node \
+      kubernetes1.28-common \
+      kubernetes1.28-crio \
+      python3-module-kubernetes-client \
+      kube-vip
+  become: yes
+  args:
+    warn: false
 
 #- name: Запрет обновления пакетов Kubernetes
 #  apt:

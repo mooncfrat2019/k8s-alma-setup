@@ -33,78 +33,42 @@
   register: offline_packages_dir
   ignore_errors: yes
 
-- name: Установка базовых пакетов для ALT Linux из офлайн-источника с fallback на интернет
+- name: Установка всех пакетов из офлайн-директории через apt-get
   block:
-    - name: Установка всех пакетов из офлайн-директории
-      shell: |
-        # Создаем временный локальный репозиторий
-        cd {{ k8s_home }}/k8s-offline/files/packages
-        dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz
-
-        # Добавляем в sources.list
-        echo "deb [trusted=yes] file:{{ k8s_home }}/k8s-offline/files/packages ./" > /etc/apt/sources.list.d/local-offline.list
-
-        # Обновляем и устанавливаем все доступные пакеты
-        apt-get update
-        apt-get install -y ./*
-      args:
-        executable: /bin/bash
+    - name: Поиск deb пакетов
+      find:
+        paths: "{{ k8s_home }}/k8s-offline/files/packages"
+        patterns: "*.deb"
+        recurse: no
+      register: deb_packages
       when:
         - offline_packages_dir is defined
         - offline_packages_dir.stat is defined
         - offline_packages_dir.stat.exists
-      ignore_errors: yes
 
-    - name: Получение списка установленных пакетов
+    - name: Показать количество найденных пакетов
+      debug:
+        msg: "Найдено deb пакетов: {{ deb_packages.files | length }}"
+      when: deb_packages.files | length > 0
+
+    - name: Установка локальных deb пакетов через apt-get
       shell: |
-        dpkg-query -W -f='${Package} ${Status}\n' | grep "install ok installed" | awk '{print $1}'
-      register: installed_packages
+        cd "{{ k8s_home }}/k8s-offline/files/packages"
+        apt-get install -y ./*.deb
+      args:
+        executable: /bin/bash
+      when: deb_packages.files | length > 0
       ignore_errors: yes
+      failed_when: false
 
-    - name: Определение отсутствующих пакетов
-      set_fact:
-        missing_packages: "{{ required_packages | difference(installed_packages.stdout_lines | default([])) }}"
-      vars:
-        required_packages:
-          - curl
-          - wget
-          - gnupg2
-          - apt-transport-https
-          - ca-certificates
-          - bridge-utils
-          - ntp
-          - ntpdate
-          - which
-          - sudo
+  when:
+    - offline_packages_dir is defined
+    - offline_packages_dir.stat is defined
+    - offline_packages_dir.stat.exists
 
-    - name: Показать отсутствующие пакеты
-      debug:
-        msg: "Отсутствующие пакеты: {{ missing_packages }}"
-      when: missing_packages | length > 0
-
-    - name: Установка отсутствующих пакетов из интернета
-      package:
-        name: "{{ item }}"
-        state: present
-      loop: "{{ missing_packages }}"
-      when: missing_packages | length > 0
-      ignore_errors: yes  # Игнорируем ошибки при установке из интернета
-      register: internet_install
-      failed_when: false  # Никогда не считать эту задачу проваленной
-
-    - name: Показать результат установки из интернета
-      debug:
-        msg: "Результат установки пакета {{ item.item }}: {{ item.failed | default(false) }}"
-      loop: "{{ internet_install.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item }}"
-
-  rescue:
-    - name: Установка всех пакетов из интернета (fallback)
-      debug:
-        msg: "Офлайн-пакеты недоступны или произошла ошибка, устанавливаем все пакеты из интернета"
-
-    - name: Установка пакетов из интернета
+- name: Установка базовых пакетов из интернета
+  block:
+    - name: Установка обязательных пакетов
       package:
         name: "{{ item }}"
         state: present
@@ -119,14 +83,14 @@
         - ntpdate
         - which
         - sudo
-      ignore_errors: yes  # Игнорируем ошибки при установке из интернета
-      register: fallback_install
-      failed_when: false  # Никогда не считать эту задачу проваленной
+      ignore_errors: yes
+      register: package_install
+      failed_when: false
 
-    - name: Показать результат fallback установки
+    - name: Показать результат установки
       debug:
-        msg: "Fallback установка пакета {{ item.item }}: {{ item.failed | default(false) }}"
-      loop: "{{ fallback_install.results | default([]) }}"
+        msg: "Пакет {{ item.item }}: {{ 'УСПЕХ' if not item.failed else 'ОШИБКА' }}"
+      loop: "{{ package_install.results | default([]) }}"
       loop_control:
         label: "{{ item.item }}"
 

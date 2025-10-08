@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ansible-playbook -i ./inventory/hosts.yml site.yml -e '{
-  "super_user": "k8s-admin",
+  "super_user": "almalinux",
   "host_1": "89.208.208.109",
   "host_2": "89.208.228.250",
   "host_3": "89.208.228.216",

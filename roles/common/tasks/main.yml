@@ -27,33 +27,40 @@
   timezone:
     name: "{{ timezone }}"
 
+- name: Проверка наличия офлайн-пакетов
+  stat:
+    path: "{{ k8s_home }}/k8s-offline/files/packages"
+  register: offline_packages_dir
+  ignore_errors: yes
+
 - name: Установка базовых пакетов для ALT Linux из офлайн-источника с fallback на интернет
   block:
-    - name: Проверка наличия офлайн-пакетов
-      stat:
-        path: "{{ k8s_home }}/k8s-offline/files/packages"
-      register: offline_packages_dir
-      when: extraction_result is defined and extraction_result.stat.exists
-
     - name: Установка доступных пакетов из офлайн-директории
       shell: |
+        set +e
         for deb in {{ k8s_home }}/k8s-offline/files/packages/*.deb; do
           if [ -f "$deb" ]; then
-            dpkg -i "$deb" || true
+            echo "Устанавливаю пакет: $deb"
+            dpkg -i "$deb" || apt-get install -f -y
           fi
         done
+        set -e
       args:
         executable: /bin/bash
-      when: offline_packages_dir.stat.exists
+      when:
+        - offline_packages_dir is defined
+        - offline_packages_dir.stat is defined
+        - offline_packages_dir.stat.exists
 
     - name: Получение списка установленных пакетов
       shell: |
         dpkg-query -W -f='${Package} ${Status}\n' | grep "install ok installed" | awk '{print $1}'
       register: installed_packages
+      ignore_errors: yes
 
     - name: Определение отсутствующих пакетов
       set_fact:
-        missing_packages: "{{ required_packages | difference(installed_packages.stdout_lines) }}"
+        missing_packages: "{{ required_packages | difference(installed_packages.stdout_lines | default([])) }}"
       vars:
         required_packages:
           - curl
@@ -67,6 +74,11 @@
           - which
           - sudo
 
+    - name: Показать отсутствующие пакеты
+      debug:
+        msg: "Отсутствующие пакеты: {{ missing_packages }}"
+      when: missing_packages | length > 0
+
     - name: Установка отсутствующих пакетов из интернета
       package:
         name: "{{ item }}"
@@ -77,7 +89,7 @@
   rescue:
     - name: Установка всех пакетов из интернета (fallback)
       debug:
-        msg: "Офлайн-пакеты недоступны, устанавливаем все пакеты из интернета"
+        msg: "Офлайн-пакеты недоступны или произошла ошибка, устанавливаем все пакеты из интернета"
 
     - name: Установка пакетов из интернета
       package:

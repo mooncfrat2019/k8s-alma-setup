@@ -1,22 +1,9 @@
 ---
-- name: Check available privilege escalation groups
-  shell: |
-    getent group wheel > /dev/null && echo "wheel" || 
-    getent group sudo > /dev/null && echo "sudo" || 
-    getent group adm > /dev/null && echo "adm" || 
-    echo "root"
-  register: privilege_group
-  changed_when: false
-
-- name: Set privilege group fact
-  set_fact:
-    privilege_group: "{{ privilege_group.stdout }}"
-
 - name: Проверка существования пользователя
   user:
     name: "{{ k8s_user }}"
     state: present
-    groups: "{{ privilege_group }}"
+    groups: wheel
     append: yes
     shell: /bin/bash
 

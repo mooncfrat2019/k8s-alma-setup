@@ -12,6 +12,20 @@
     state: started
     enabled: yes
 
+- name: Настройка незащищенного registry в Docker
+  copy:
+    content: |
+      {
+        "insecure-registries": ["{{ registry_url }}"]
+      }
+    dest: /etc/docker/daemon.json
+    mode: 0644
+
+- name: Перезагрузка Docker
+  systemd:
+    name: docker
+    state: restarted
+
 - name: Создание директории для registry
   file:
     path: /opt/docker-registry
@@ -53,20 +67,6 @@
     port: "{{ registry_port }}"
     delay: 5
     timeout: 30
-
-- name: Настройка незащищенного registry в Docker
-  copy:
-    content: |
-      {
-        "insecure-registries": ["{{ registry_url }}"]
-      }
-    dest: /etc/docker/daemon.json
-    mode: 0644
-
-- name: Перезагрузка Docker
-  systemd:
-    name: docker
-    state: restarted
 
 - name: Ожидание перезапуска Docker
   wait_for:

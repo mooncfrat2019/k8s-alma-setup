@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-echo "=== Loading Docker images to local registry ==="
+echo "=== Loading and pushing Docker images to local registry ==="
 
 REGISTRY="{{ registry_url }}"
-IMAGES_DIR="{{ images_source_dir | default(k8s_home + '/k8s-offline/files/images') }}"
+IMAGES_DIR="{{ k8s_home }}/k8s-offline/files/images"
 
 # Check if images directory exists
 if [ ! -d "$IMAGES_DIR" ]; then
@@ -17,36 +17,56 @@ echo "📁 Loading images from: $IMAGES_DIR"
 # Load and push each image
 for image_tar in "$IMAGES_DIR"/*.tar; do
     if [ -f "$image_tar" ]; then
-        image_name=$(basename "$image_tar" .tar)
-        echo "📦 Loading: $image_name"
+        echo "📦 Processing: $(basename "$image_tar")"
 
         # Load image from tar
         docker load -i "$image_tar"
 
-        # Get the actual image name after loading
-        loaded_image=$(docker images --format "{{ '{{.Repository}}:{{.Tag}}' }}" | grep "$image_name" | head -1)
+        # Get image ID and tags
+        image_id=$(tar -xf "$image_tar" manifest.json -O | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['Config'].split('.')[0])" 2>/dev/null || echo "")
 
-        if [ -n "$loaded_image" ]; then
-            echo "🚀 Pushing: $loaded_image to $REGISTRY"
+        if [ -n "$image_id" ]; then
+            # Get all tags for this image
+            tags=$(docker images --no-trunc --format "{{ '{{.Repository}}:{{.Tag}}' }}" | grep "$image_id" | head -1)
 
-            # Tag for local registry
-            docker tag "$loaded_image" "$REGISTRY/$loaded_image"
+            for original_tag in $tags; do
+                if [ -n "$original_tag" ] && [ "$original_tag" != "<none>:<none>" ]; then
+                    echo "🏷️  Original tag: $original_tag"
 
-            # Push to registry
-            docker push "$REGISTRY/$loaded_image"
+                    # Extract image name without registry prefix
+                    image_name_with_tag=$(echo "$original_tag" | sed 's|^.*/||')
+                    if [ -z "$image_name_with_tag" ]; then
+                        image_name_with_tag="$original_tag"
+                    fi
 
-            # Remove temporary tag
-            docker rmi "$REGISTRY/$loaded_image"
+                    # Create new tag for local registry
+                    new_tag="$REGISTRY/$image_name_with_tag"
 
-            echo "✅ Success: $loaded_image"
+                    echo "🚀 Tagging: $original_tag -> $new_tag"
+                    docker tag "$original_tag" "$new_tag"
+
+                    echo "📤 Pushing: $new_tag"
+                    docker push "$new_tag"
+
+                    echo "✅ Success: $new_tag"
+                else
+                    echo "⚠️  No valid tags found for image"
+                    # Try to tag by image ID
+                    new_tag="$REGISTRY/unknown-$(basename "$image_tar" .tar)"
+                    echo "🚀 Tagging by ID: $image_id -> $new_tag"
+                    docker tag "$image_id" "$new_tag"
+                    docker push "$new_tag"
+                    echo "✅ Success: $new_tag"
+                fi
+            done
         else
-            echo "⚠️  Warning: Could not find loaded image for $image_name"
+            echo "❌ Could not extract image info from: $(basename "$image_tar")"
         fi
     fi
 done
 
 echo ""
-echo "🎉 All images loaded successfully!"
+echo "🎉 Image loading and pushing completed!"
 echo "📋 Checking registry catalog..."
 
 # Display catalog

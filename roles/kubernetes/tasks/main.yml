@@ -1,6 +1,6 @@
 ---
 - name: Установка Kubernetes компонентов
-  apt-get:
+  apt:
     name: "{{ item }}"
     state: present
   loop:
@@ -9,7 +9,7 @@
     - kubectl={{ kubernetes_version }}-00
 
 - name: Запрет обновления пакетов Kubernetes
-  apt-get:
+  apt:
     name: "{{ item }}"
     state: held
   loop:

@@ -1,6 +1,6 @@
 ---
 - name: Установка Docker
-  apt-get:
+  apt:
     name:
       - docker.io
       - docker-compose

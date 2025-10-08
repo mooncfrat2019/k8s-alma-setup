@@ -1,6 +1,6 @@
 ---
 - name: Установка containerd
-  apt-get:
+  apt:
     name: containerd
     state: present
 

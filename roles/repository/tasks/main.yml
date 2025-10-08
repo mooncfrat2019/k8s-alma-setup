@@ -14,12 +14,12 @@
     mode: 0644
 
 - name: Установка nginx
-  apt-get:
+  apt:
     name: nginx
     state: present
 
 - name: Установка пакетов из локальной директории
-  apt-get:
+  apt:
     deb: "{{ packages_path }}/{{ item }}"
   loop: "{{ lookup('fileglob', playbook_dir + '/files/packages/*.deb') | map('basename') | list }}"
   ignore_errors: yes
@@ -71,6 +71,6 @@
     backup: yes
 
 - name: Обновление списка пакетов
-  apt-get:
+  apt:
     update_cache: yes
     cache_valid_time: 3600

@@ -1,6 +1,6 @@
 ---
 - name: Установка HAProxy
-  apt-get:
+  apt:
     name: haproxy
     state: present
 

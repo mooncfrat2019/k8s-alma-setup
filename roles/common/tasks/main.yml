@@ -28,7 +28,7 @@
     name: "{{ timezone }}"
 
 - name: Установка базовых пакетов
-  apt-get:
+  apt:
     name: "{{ item }}"
     state: present
     update_cache: yes

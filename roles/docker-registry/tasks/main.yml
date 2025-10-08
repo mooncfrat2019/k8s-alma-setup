@@ -77,7 +77,7 @@
 
 - name: Копирование образов на registry сервер
   copy:
-    src: "{{ playbook_dir }}/files/images/"
+    src: "{{ k8s_home }}/k8s-offline/files/images"
     dest: "{{ images_path }}"
     mode: 0644
 

@@ -1,10 +1,10 @@
 ---
-- name: Установка Docker
-  apt:
-    name:
-      - docker-engine
-      - docker-compose
-    state: present
+#- name: Установка Docker
+#  apt:
+#    name:
+#      - docker-engine
+#      - docker-compose
+#    state: present
 
 - name: Запуск и включение Docker
   systemd:

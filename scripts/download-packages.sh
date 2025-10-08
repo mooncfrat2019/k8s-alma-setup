@@ -152,13 +152,17 @@ download_packages_with_deps() {
     local downloaded_count=0
     local failed_packages=()
 
+    # Переходим в целевую директорию для скачивания
+    local original_dir=$(pwd)
+    cd "$DOWNLOAD_DIR"
+
     for pkg in "${all_packages_to_download[@]}"; do
         # Проверяем, не скачан ли уже пакет
-        if ! ls "$DOWNLOAD_DIR"/*"$pkg"*".deb" > /dev/null 2>&1; then
+        if ! ls *"$pkg"*".deb" > /dev/null 2>&1; then
             echo "📥 Downloading: $pkg"
 
-            # Пробуем скачать в основную директорию
-            if apt-get download "$pkg" -o Dir::Cache::archives="$DOWNLOAD_DIR" 2>/dev/null; then
+            # Скачиваем пакет напрямую в текущую директорию
+            if apt-get download "$pkg" 2>/dev/null; then
                 echo "✅ Downloaded: $pkg"
                 downloaded_count=$((downloaded_count + 1))
             else
@@ -169,6 +173,9 @@ download_packages_with_deps() {
             echo "📦 Already downloaded: $pkg"
         fi
     done
+
+    # Возвращаемся обратно
+    cd "$original_dir"
 
     echo "📊 Dependency download: $downloaded_count packages downloaded"
     if [ ${#failed_packages[@]} -gt 0 ]; then
@@ -378,17 +385,17 @@ if ls *.deb > /dev/null 2>&1; then
     dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > Packages.gz
     echo "✅ Repository index created"
 
-    # Создаем список пакетов с зависимостями
-    #echo "📋 Creating package list..."
-    #ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "Package list generation completed" > "$PACKAGE_LIST_FILE"
+    # Создаем список пакетов
+    echo "📋 Creating package list..."
+    ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "Package list generation completed" > "$PACKAGE_LIST_FILE"
 
     # Добавляем информацию о количестве пакетов
-    #PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l)
-    #echo "Total packages: $PACKAGE_COUNT" >> "$PACKAGE_LIST_FILE"
-    #echo "Main packages: ${ALL_PACKAGES[*]}" >> "$PACKAGE_LIST_FILE"
+    PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l)
+    echo "Total packages: $PACKAGE_COUNT" >> "$PACKAGE_LIST_FILE"
+    echo "Main packages: ${ALL_PACKAGES[*]}" >> "$PACKAGE_LIST_FILE"
 else
     echo "❌ No packages to index"
-    #echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
+    echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
 fi
 
 # Финальная проверка и отчет

@@ -1,43 +1,53 @@
 #!/bin/bash
 set -e
 
+echo "=== Loading Docker images to local registry ==="
+
 REGISTRY="{{ registry_url }}"
-IMAGES_PATH="{{ images_path }}"
+IMAGES_DIR="{{ images_source_dir | default(k8s_home + '/k8s-offline/files/images') }}"
 
-echo "Загрузка образов в локальный registry: $REGISTRY"
+# Check if images directory exists
+if [ ! -d "$IMAGES_DIR" ]; then
+    echo "❌ Error: Images directory not found: $IMAGES_DIR"
+    exit 1
+fi
 
-# Функция для загрузки и пуш образа
-push_image() {
-    local image_file=$1
-    local original_image=$(basename $image_file .tar | sed 's/_/:/' | sed 's/_/\//g')
-    local registry_image=$(echo $original_image | sed "s|.*/|$REGISTRY/|")
+echo "📁 Loading images from: $IMAGES_DIR"
 
-    echo "Загрузка: $image_file"
-    echo "Оригинальный образ: $original_image"
-    echo "Registry образ: $registry_image"
+# Load and push each image
+for image_tar in "$IMAGES_DIR"/*.tar; do
+    if [ -f "$image_tar" ]; then
+        image_name=$(basename "$image_tar" .tar)
+        echo "📦 Loading: $image_name"
 
-    # Загрузка образа
-    docker load -i $image_file
+        # Load image from tar
+        docker load -i "$image_tar"
 
-    # Тегирование и пуш в registry
-    docker tag $original_image $registry_image
-    docker push $registry_image
+        # Get the actual image name after loading
+        loaded_image=$(docker images --format "{{ '{{.Repository}}:{{.Tag}}' }}" | grep "$image_name" | head -1)
 
-    # Очистка локальных образов
-    docker rmi $original_image $registry_image 2>/dev/null || true
+        if [ -n "$loaded_image" ]; then
+            echo "🚀 Pushing: $loaded_image to $REGISTRY"
 
-    echo "Успешно: $registry_image"
-    echo "---"
-}
+            # Tag for local registry
+            docker tag "$loaded_image" "$REGISTRY/$loaded_image"
 
-# Загрузка Kubernetes образов
-{% for image in k8s_images %}
-push_image "{{ images_path }}/{{ image | replace('/', '_') | replace(':', '_') }}.tar"
-{% endfor %}
+            # Push to registry
+            docker push "$REGISTRY/$loaded_image"
 
-# Загрузка Calico образов
-{% for image in calico_images %}
-push_image "{{ images_path }}/{{ image | replace('/', '_') | replace(':', '_') }}.tar"
-{% endfor %}
+            # Remove temporary tag
+            docker rmi "$REGISTRY/$loaded_image"
 
-echo "Все образы успешно загружены в registry!"
+            echo "✅ Success: $loaded_image"
+        else
+            echo "⚠️  Warning: Could not find loaded image for $image_name"
+        fi
+    fi
+done
+
+echo ""
+echo "🎉 All images loaded successfully!"
+echo "📋 Checking registry catalog..."
+
+# Display catalog
+curl -s -X GET "http://$REGISTRY/v2/_catalog" | python3 -m json.tool 2>/dev/null || curl -s -X GET "http://$REGISTRY/v2/_catalog"

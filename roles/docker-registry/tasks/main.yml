@@ -75,17 +75,13 @@
     delay: 10
     timeout: 60
 
-- name: Копирование образов на registry сервер
-  copy:
-    src: "{{ k8s_home }}/k8s-offline/files/images"
-    dest: "{{ images_path }}"
-    mode: 0644
-
 - name: Создание скрипта для загрузки образов в registry
   template:
     src: push-images.sh.j2
     dest: /opt/docker-registry/push-images.sh
     mode: 0755
+  vars:
+    images_source_dir: "{{ k8s_home }}/k8s-offline/files/images"
 
 - name: Загрузка образов в локальный registry
   shell: |

@@ -51,7 +51,44 @@
         daemon_reload: yes
       become: yes
 
-    - name: Ожидание готовности containerd
+    - name: Настройка insecure registry в containerd
+      copy:
+        content: |
+          version = 2
+          root = "/var/lib/containerd"
+          state = "/run/containerd"
+          [grpc]
+            address = "/run/containerd/containerd.sock"
+          [plugins]
+            [plugins."io.containerd.grpc.v1.cri"]
+              sandbox_image = "{{ registry_url }}/pause:3.9"
+              [plugins."io.containerd.grpc.v1.cri".registry]
+                [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+                  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."89.208.208.139:5000"]
+                    endpoint = ["http://89.208.208.139:5000"]
+                [plugins."io.containerd.grpc.v1.cri".registry.configs]
+                  [plugins."io.containerd.grpc.v1.cri".registry.configs."89.208.208.139:5000".tls]
+                    insecure_skip_verify = true
+              [plugins."io.containerd.grpc.v1.cri".containerd]
+                snapshotter = "overlayfs"
+                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+                  runtime_type = "io.containerd.runc.v2"
+                  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+                    SystemdCgroup = true
+        dest: /etc/containerd/config.toml
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Перезапуск containerd после изменения конфига
+      systemd:
+        name: containerd
+        state: restarted
+        daemon_reload: yes
+      become: yes
+
+    - name: Ожидание готовности containerd после перезапуска
       wait_for:
         path: /var/run/containerd/containerd.sock
         state: present

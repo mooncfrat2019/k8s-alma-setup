@@ -6,68 +6,55 @@ echo "=== Loading and pushing Docker images to local registry ==="
 REGISTRY="{{ registry_url }}"
 IMAGES_DIR="{{ k8s_home }}/k8s-offline/files/images"
 
+echo "Registry: $REGISTRY"
+echo "Images dir: $IMAGES_DIR"
+
 # Check if images directory exists
 if [ ! -d "$IMAGES_DIR" ]; then
     echo "❌ Error: Images directory not found: $IMAGES_DIR"
     exit 1
 fi
 
-echo "📁 Loading images from: $IMAGES_DIR"
+echo "=== Step 1: Loading all images ==="
+for tar_file in "$IMAGES_DIR"/*.tar; do
+    if [ -f "$tar_file" ]; then
+        echo "Loading: $tar_file"
+        docker load -i "$tar_file"
+    fi
+done
 
-# Load and push each image
-for image_tar in "$IMAGES_DIR"/*.tar; do
-    if [ -f "$image_tar" ]; then
-        echo "📦 Processing: $(basename "$image_tar")"
+echo "=== Step 2: Listing all loaded images ==="
+docker images
 
-        # Load image from tar
-        docker load -i "$image_tar"
+echo "=== Step 3: Tagging and pushing images ==="
+# Use a simple approach to get image names and tags
+docker images --format "{{ '{{.Repository}}' }}:{{ '{{.Tag}}' }}" | grep -v "<none>" | while read image; do
+    if [ -n "$image" ] && [ "$image" != "<none>:<none>" ]; then
+        echo "Processing: $image"
 
-        # Get image ID and tags
-        image_id=$(tar -xf "$image_tar" manifest.json -O | python3 -c "import json,sys; print(json.load(sys.stdin)[0]['Config'].split('.')[0])" 2>/dev/null || echo "")
+        # Extract repository and tag
+        repository="${image%:*}"
+        tag="${image#*:}"
 
-        if [ -n "$image_id" ]; then
-            # Get all tags for this image
-            tags=$(docker images --no-trunc --format "{{ '{{.Repository}}:{{.Tag}}' }}" | grep "$image_id" | head -1)
-
-            for original_tag in $tags; do
-                if [ -n "$original_tag" ] && [ "$original_tag" != "<none>:<none>" ]; then
-                    echo "🏷️  Original tag: $original_tag"
-
-                    # Extract image name without registry prefix
-                    image_name_with_tag=$(echo "$original_tag" | sed 's|^.*/||')
-                    if [ -z "$image_name_with_tag" ]; then
-                        image_name_with_tag="$original_tag"
-                    fi
-
-                    # Create new tag for local registry
-                    new_tag="$REGISTRY/$image_name_with_tag"
-
-                    echo "🚀 Tagging: $original_tag -> $new_tag"
-                    docker tag "$original_tag" "$new_tag"
-
-                    echo "📤 Pushing: $new_tag"
-                    docker push "$new_tag"
-
-                    echo "✅ Success: $new_tag"
-                else
-                    echo "⚠️  No valid tags found for image"
-                    # Try to tag by image ID
-                    new_tag="$REGISTRY/unknown-$(basename "$image_tar" .tar)"
-                    echo "🚀 Tagging by ID: $image_id -> $new_tag"
-                    docker tag "$image_id" "$new_tag"
-                    docker push "$new_tag"
-                    echo "✅ Success: $new_tag"
-                fi
-            done
+        # Create new tag for registry
+        if [[ "$repository" == *"/"* ]]; then
+            new_name="${repository##*/}"
         else
-            echo "❌ Could not extract image info from: $(basename "$image_tar")"
+            new_name="$repository"
+        fi
+
+        new_tag="$REGISTRY/$new_name:$tag"
+        echo "Tagging: $image -> $new_tag"
+        docker tag "$image" "$new_tag"
+
+        echo "Pushing: $new_tag"
+        if docker push "$new_tag"; then
+            echo "✅ Success: $new_tag"
+        else
+            echo "❌ Failed to push: $new_tag"
         fi
     fi
 done
 
-echo ""
-echo "🎉 Image loading and pushing completed!"
-echo "📋 Checking registry catalog..."
-
-# Display catalog
-curl -s -X GET "http://$REGISTRY/v2/_catalog" | python3 -m json.tool 2>/dev/null || curl -s -X GET "http://$REGISTRY/v2/_catalog"
+echo "=== Step 4: Final check ==="
+curl -s "http://$REGISTRY/v2/_catalog"

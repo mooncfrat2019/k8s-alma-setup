@@ -16,8 +16,6 @@
       python3-module-kubernetes-client \
       kube-vip
   become: yes
-  args:
-    warn: false
 
 #- name: Запрет обновления пакетов Kubernetes
 #  apt:

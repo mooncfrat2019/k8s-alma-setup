@@ -9,7 +9,15 @@ EXTRACT_DIR="{{ k8s_home }}/k8s-offline"
 # Check if bundle exists
 if [ ! -f "$BUNDLE_FILE" ]; then
     echo "❌ Error: Bundle file not found: $BUNDLE_FILE"
-    echo "💡 If bundle was already transferred, check the path"
+    echo "💡 If using skip_bundle_transfer, ensure the bundle was manually copied to this path"
+    echo "💡 Or run without skip_bundle_transfer to transfer automatically"
+    exit 1
+fi
+
+# Check bundle integrity
+echo "🔍 Checking bundle integrity..."
+if ! tar -tzf "$BUNDLE_FILE" > /dev/null 2>&1; then
+    echo "❌ Error: Bundle file is corrupted or invalid"
     exit 1
 fi
 

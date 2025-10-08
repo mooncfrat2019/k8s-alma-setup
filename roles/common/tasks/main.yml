@@ -27,21 +27,93 @@
   timezone:
     name: "{{ timezone }}"
 
+- name: Создание локального репозитория из офлайн пакетов
+  block:
+    - name: Создание директории для локального репозитория
+      file:
+        path: /tmp/local-repo
+        state: directory
+        mode: 0755
+
+    - name: Копирование пакетов для локального репозитория
+      copy:
+        src: "{{ k8s_home }}/k8s-offline/files/packages/"
+        dest: /tmp/local-repo/
+        mode: 0644
+        remote_src: yes
+
+    - name: Создание индекс файла для локального репозитория
+      command: >
+        dpkg-scanpackages . /dev/null | gzip -9c > Packages.gz
+      args:
+        chdir: /tmp/local-repo
+      ignore_errors: yes
+
+    - name: Добавление локального репозитория в sources.list
+      lineinfile:
+        path: /etc/apt/sources.list
+        line: "deb [trusted=yes] file:/tmp/local-repo ./"
+        state: present
+
+    - name: Обновление кэша apt с локальным репозиторием
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+  when: extraction_result is defined and extraction_result.stat.exists
+
 - name: Установка базовых пакетов для ALT Linux
-  package:
-    name: "{{ item }}"
-    state: present
-  loop:
-    - curl
-    - wget
-    - gnupg2
-    - apt-transport-https
-    - ca-certificates
-    - bridge-utils
-    - ntp
-    - ntpdate
-    - which
-    - sudo  # Убедимся что sudo установлен
+  block:
+    - name: Попытка установки из локального репозитория
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - curl
+        - wget
+        - gnupg2
+        - apt-transport-https
+        - ca-certificates
+        - bridge-utils
+        - ntp
+        - ntpdate
+        - which
+      register: local_install
+      ignore_errors: yes
+      when: extraction_result is defined and extraction_result.stat.exists
+
+    - name: Получение списка неустановленных пакетов
+      set_fact:
+        failed_packages: "{{ local_install.results | selectattr('failed') | map(attribute='item') | list }}"
+      when:
+        - extraction_result is defined
+        - extraction_result.stat.exists
+        - local_install is defined
+
+    - name: Установка отсутствующих пакетов из интернета
+      package:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ failed_packages | default([]) }}"
+      when:
+        - failed_packages | length > 0
+        - extraction_result is defined
+        - extraction_result.stat.exists
+
+    - name: Установка всех пакетов из интернета (если локальный репозиторий недоступен)
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - curl
+        - wget
+        - gnupg2
+        - apt-transport-https
+        - ca-certificates
+        - bridge-utils
+        - ntp
+        - ntpdate
+        - which
+      when: extraction_result is not defined or not extraction_result.stat.exists
 
 - name: Настройка параметров ядра
   sysctl:
@@ -87,6 +159,24 @@
     - /etc/kubernetes
     - /var/lib/kubelet
     - /var/lib/etcd
+
+- name: Очистка локального репозитория
+  file:
+    path: /tmp/local-repo
+    state: absent
+  when: extraction_result is defined and extraction_result.stat.exists
+
+- name: Удаление локального репозитория из sources.list
+  lineinfile:
+    path: /etc/apt/sources.list
+    line: "deb [trusted=yes] file:/tmp/local-repo ./"
+    state: absent
+  when: extraction_result is defined and extraction_result.stat.exists
+
+- name: Обновление кэша apt после удаления локального репозитория
+  apt:
+    update_cache: yes
+  when: extraction_result is defined and extraction_result.stat.exists
 
 - name: Перезагрузка системы (требуется для применения параметров ядра)
   reboot:

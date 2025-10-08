@@ -27,7 +27,7 @@ echo "📋 Kubernetes version: $K8S_VERSION"
 K8S_MAJOR_MINOR=$(echo $K8S_VERSION | cut -d. -f1-2)
 
 # Критически важные пакеты
-CRITICAL_PACKAGES=("kubelet" "kubeadm" "kubectl" "containerd" "docker.io" "kubernetes-cni")
+CRITICAL_PACKAGES=("kubelet" "kubeadm" "kubectl" "containerd" "docker.io" "docker-compose" "kubernetes-cni")
 
 # Все пакеты
 ALL_PACKAGES=(
@@ -49,6 +49,8 @@ ALL_PACKAGES=(
 
     # Docker
     "docker.io"
+    "docker-compose"
+    "python3-apt"
 
     # Kubernetes
     "kubelet"

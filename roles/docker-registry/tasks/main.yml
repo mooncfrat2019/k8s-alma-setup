@@ -74,7 +74,7 @@
 
 - name: Проверка загруженных образов в Docker
   shell: |
-    docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.ID}}"
+    docker images
   register: docker_images
   changed_when: false
 
@@ -104,20 +104,21 @@
       docker images
       
       echo "=== Step 3: Tagging and pushing images ==="
-      # Get all images except <none>
-      docker images --format "{{.Repository}}:{{.Tag}}" | grep -v "<none>" | while read image; do
-          if [ -n "$image" ] && [ "$image" != "<none>:<none>" ]; then
-              echo "Processing: $image"
+      # Get all image IDs except <none>
+      docker images --no-trunc --format "{{.ID}} {{.Repository}} {{.Tag}}" | while read id repository tag; do
+          if [ "$repository" != "<none>" ] && [ "$tag" != "<none>" ]; then
+              echo "Processing: $repository:$tag"
       
-              # Extract name and tag
-              if echo "$image" | grep -q "/"; then
-                  new_tag="$REGISTRY/$(echo $image | cut -d'/' -f2-)"
+              # Create new tag
+              if [[ "$repository" == *"/"* ]]; then
+                  new_name=$(echo $repository | cut -d'/' -f2-)
               else
-                  new_tag="$REGISTRY/$image"
+                  new_name=$repository
               fi
       
-              echo "Tagging: $image -> $new_tag"
-              docker tag "$image" "$new_tag"
+              new_tag="$REGISTRY/$new_name:$tag"
+              echo "Tagging: $repository:$tag -> $new_tag"
+              docker tag "$repository:$tag" "$new_tag"
       
               echo "Pushing: $new_tag"
               docker push "$new_tag"
@@ -127,7 +128,7 @@
       done
       
       echo "=== Step 4: Final check ==="
-      curl -s http://$REGISTRY/v2/_catalog | python -m json.tool 2>/dev/null || curl -s http://$REGISTRY/v2/_catalog
+      curl -s http://$REGISTRY/v2/_catalog
     mode: 0755
 
 - name: Загрузка образов в локальный registry
@@ -154,10 +155,10 @@
 
 - name: Проверка что registry хранит данные
   shell: |
-    ls -la /opt/docker-registry/data/docker/registry/v2/repositories/
+    find /opt/docker-registry/data -type f -name "manifest" | head -5
   register: registry_data
   ignore_errors: yes
 
 - name: Показать данные registry
   debug:
-    msg: "Registry data: {{ registry_data.stdout }}"
+    msg: "Registry data files: {{ registry_data.stdout }}"

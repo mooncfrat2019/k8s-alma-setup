@@ -29,7 +29,7 @@ K8S_MAJOR_MINOR=$(echo $K8S_VERSION | cut -d. -f1-2)
 # Критически важные пакеты
 CRITICAL_PACKAGES=("kubelet" "kubeadm" "kubectl" "containerd" "docker.io" "docker-compose" "kubernetes-cni")
 
-# Все пакеты
+# Все пакеты для скачивания
 ALL_PACKAGES=(
     # System utilities
     "curl"
@@ -63,6 +63,119 @@ ALL_PACKAGES=(
     "nginx"
 )
 
+# Функция для получения всех зависимостей пакета
+get_package_dependencies() {
+    local package=$1
+    local dependencies=()
+
+    echo "🔍 Analyzing dependencies for: $package"
+
+    # Получаем список зависимостей через apt-cache
+    if apt-cache show "$package" &>/dev/null; then
+        # Получаем прямые зависимости (Depends)
+        local dep_list=$(apt-cache depends "$package" | grep -E "^\s*Depends:" | sed 's/^ *Depends: *//' | grep -v "^<" | cut -d':' -f1 | tr -d ' ')
+
+        # Также получаем Recommends (важные рекомендации)
+        local rec_list=$(apt-cache depends "$package" | grep -E "^\s*Recommends:" | sed 's/^ *Recommends: *//' | grep -v "^<" | cut -d':' -f1 | tr -d ' ')
+
+        # Объединяем списки
+        dependencies=($dep_list $rec_list)
+
+        # Убираем дубликаты и пустые строки
+        dependencies=($(printf "%s\n" "${dependencies[@]}" | sort -u))
+
+        echo "📦 Found ${#dependencies[@]} dependencies for $package"
+    else
+        echo "⚠️  Package not found in repository: $package"
+    fi
+
+    echo "${dependencies[@]}"
+}
+
+# Функция для рекурсивного получения всех зависимостей
+get_all_dependencies() {
+    local packages=("$@")
+    local all_deps=()
+    local processed=()
+
+    # Функция для рекурсивного обхода
+    traverse_deps() {
+        local current_pkg=$1
+
+        # Проверяем, не обрабатывали ли уже этот пакет
+        if [[ " ${processed[@]} " =~ " ${current_pkg} " ]]; then
+            return
+        fi
+        processed+=("$current_pkg")
+
+        # Получаем зависимости текущего пакета
+        local deps=($(get_package_dependencies "$current_pkg"))
+
+        # Добавляем зависимости в общий список
+        for dep in "${deps[@]}"; do
+            if [ -n "$dep" ] && [[ ! " ${all_deps[@]} " =~ " ${dep} " ]]; then
+                all_deps+=("$dep")
+                # Рекурсивно получаем зависимости зависимости
+                traverse_deps "$dep"
+            fi
+        done
+    }
+
+    # Обходим все начальные пакеты
+    for pkg in "${packages[@]}"; do
+        traverse_deps "$pkg"
+    done
+
+    echo "${all_deps[@]}"
+}
+
+# Функция для скачивания пакетов с зависимостями
+download_packages_with_deps() {
+    local packages=("$@")
+    local all_packages_to_download=()
+
+    echo "📊 Analyzing dependency tree for ${#packages[@]} packages..."
+
+    # Получаем все зависимости
+    local dependencies=($(get_all_dependencies "${packages[@]}"))
+
+    # Объединяем основные пакеты и их зависимости
+    all_packages_to_download=("${packages[@]}" "${dependencies[@]}")
+
+    # Убираем дубликаты
+    all_packages_to_download=($(printf "%s\n" "${all_packages_to_download[@]}" | sort -u))
+
+    echo "📦 Total packages to download: ${#all_packages_to_download[@]}"
+    echo "📋 Packages: ${all_packages_to_download[*]}"
+
+    # Скачиваем все пакеты
+    local downloaded_count=0
+    local failed_packages=()
+
+    for pkg in "${all_packages_to_download[@]}"; do
+        # Проверяем, не скачан ли уже пакет
+        if ! ls "$DOWNLOAD_DIR"/*"$pkg"*".deb" > /dev/null 2>&1; then
+            echo "📥 Downloading: $pkg"
+
+            # Пробуем скачать в основную директорию
+            if apt-get download "$pkg" -o Dir::Cache::archives="$DOWNLOAD_DIR" 2>/dev/null; then
+                echo "✅ Downloaded: $pkg"
+                downloaded_count=$((downloaded_count + 1))
+            else
+                echo "❌ Failed to download: $pkg"
+                failed_packages+=("$pkg")
+            fi
+        else
+            echo "📦 Already downloaded: $pkg"
+        fi
+    done
+
+    echo "📊 Dependency download: $downloaded_count packages downloaded"
+    if [ ${#failed_packages[@]} -gt 0 ]; then
+        echo "⚠️  Failed to download: ${failed_packages[*]}"
+    fi
+}
+
 # Функция для добавления репозиториев
 add_repositories() {
     echo "🔧 Adding required repositories..."
@@ -91,7 +204,7 @@ check_downloaded_packages() {
     local missing_packages=()
 
     for pkg in "${CRITICAL_PACKAGES[@]}"; do
-        if ! ls "$DOWNLOAD_DIR"/*"$pkg"* > /dev/null 2>&1; then
+        if ! ls "$DOWNLOAD_DIR"/*"$pkg"*".deb" > /dev/null 2>&1; then
             missing_packages+=("$pkg")
         fi
     done
@@ -99,30 +212,11 @@ check_downloaded_packages() {
     echo "${missing_packages[@]}"
 }
 
-# Метод 1: Основной метод через apt-get download
+# Метод 1: Основной метод через apt-get download с зависимостями
 download_with_apt_get() {
-    echo "📦 Method 1: Using apt-get download (primary method)..."
+    echo "📦 Method 1: Using apt-get download with dependencies (primary method)..."
 
-    local downloaded_count=0
-
-    for pkg in "${ALL_PACKAGES[@]}"; do
-        if apt-cache show "$pkg" &>/dev/null; then
-            echo "📥 Downloading: $pkg"
-
-            # Скачиваем пакет напрямую в целевую директорию
-            if apt-get download "$pkg" -o Dir::Cache::archives="$DOWNLOAD_DIR" 2>/dev/null; then
-                echo "✅ Downloaded: $pkg"
-                downloaded_count=$((downloaded_count + 1))
-            else
-                echo "⚠️  Failed to download: $pkg"
-            fi
-        else
-            echo "⚠️  Package not found in repository: $pkg"
-        fi
-    done
-
-    echo "📊 Apt-get method: $downloaded_count packages downloaded"
-    # Не возвращаем код выхода, чтобы скрипт не прерывался
+    download_packages_with_deps "${ALL_PACKAGES[@]}"
 }
 
 # Метод 2: Альтернативный метод - скачиваем в целевой директории
@@ -165,7 +259,7 @@ download_kubernetes_direct() {
         url="https://pkgs.k8s.io/core:/stable:/v${K8S_MAJOR_MINOR}/deb/amd64/${filename}"
 
         # Проверяем, не скачан ли уже пакет
-        if ! ls "$DOWNLOAD_DIR"/*"$pkg"* > /dev/null 2>&1; then
+        if ! ls "$DOWNLOAD_DIR"/*"$pkg"*".deb" > /dev/null 2>&1; then
             echo "📥 Downloading: $pkg"
             if wget -q --timeout=30 --tries=3 "$url" -O "$DOWNLOAD_DIR/$filename"; then
                 echo "✅ Downloaded: $pkg"
@@ -181,7 +275,7 @@ download_kubernetes_direct() {
     CNI_PACKAGE="kubernetes-cni_${CNI_VERSION}-0.0~amd64.deb"
     CNI_URL="https://pkgs.k8s.io/core:/stable:/v${K8S_MAJOR_MINOR}/deb/amd64/${CNI_PACKAGE}"
 
-    if ! ls "$DOWNLOAD_DIR"/*"kubernetes-cni"* > /dev/null 2>&1; then
+    if ! ls "$DOWNLOAD_DIR"/*"kubernetes-cni"*".deb" > /dev/null 2>&1; then
         echo "📥 Downloading: kubernetes-cni"
         if wget -q --timeout=30 "$CNI_URL" -O "$DOWNLOAD_DIR/$CNI_PACKAGE"; then
             echo "✅ Downloaded: kubernetes-cni"
@@ -209,7 +303,7 @@ download_core_packages_direct() {
 
     for pkg in "${!CORE_PACKAGES[@]}"; do
         # Скачиваем только если пакет еще не скачан и он критически важен
-        if ! ls "$DOWNLOAD_DIR"/*"$pkg"* > /dev/null 2>&1; then
+        if ! ls "$DOWNLOAD_DIR"/*"$pkg"*".deb" > /dev/null 2>&1; then
             url="${CORE_PACKAGES[$pkg]}"
             filename=$(basename "$url")
 
@@ -232,9 +326,9 @@ echo "🔄 Setting up for Kubernetes $K8S_VERSION on Ubuntu 22.04..."
 sudo apt-get update
 add_repositories
 
-# Шаг 1: Пробуем основной метод
+# Шаг 1: Пробуем основной метод с зависимостями
 echo ""
-echo "🚀 Step 1: Trying primary download method..."
+echo "🚀 Step 1: Trying primary download method with dependencies..."
 download_with_apt_get
 
 # Проверяем что скачалось
@@ -284,11 +378,17 @@ if ls *.deb > /dev/null 2>&1; then
     dpkg-scanpackages . /dev/null 2>/dev/null | gzip -9c > Packages.gz
     echo "✅ Repository index created"
 
-    # Создаем список пакетов
-    #ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "No package list generated" > "$PACKAGE_LIST_FILE"
+    # Создаем список пакетов с зависимостями
+    echo "📋 Creating package list..."
+    ls -la *.deb > "$PACKAGE_LIST_FILE" 2>/dev/null || echo "Package list generation completed" > "$PACKAGE_LIST_FILE"
+
+    # Добавляем информацию о количестве пакетов
+    PACKAGE_COUNT=$(ls -1 *.deb 2>/dev/null | wc -l)
+    echo "Total packages: $PACKAGE_COUNT" >> "$PACKAGE_LIST_FILE"
+    echo "Main packages: ${ALL_PACKAGES[*]}" >> "$PACKAGE_LIST_FILE"
 else
     echo "❌ No packages to index"
-    #echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
+    echo "No packages downloaded" > "$PACKAGE_LIST_FILE"
 fi
 
 # Финальная проверка и отчет
@@ -312,6 +412,13 @@ else
     fi
 fi
 
+echo ""
+echo "📋 Summary:"
+echo "   - Packages directory: $DOWNLOAD_DIR"
+echo "   - Package list file: $PACKAGE_LIST_FILE"
+echo "   - Total .deb files: $PACKAGE_COUNT"
+echo "   - Main packages: ${#ALL_PACKAGES[@]}"
+echo "   - Including dependencies: $PACKAGE_COUNT"
 echo ""
 echo "🚀 Package download process completed!"
 exit 0

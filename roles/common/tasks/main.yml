@@ -183,3 +183,4 @@
     pre_reboot_delay: 0
     post_reboot_delay: 30
     test_command: uptime
+  when: need_restart | default(false) | bool

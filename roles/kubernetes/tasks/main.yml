@@ -607,121 +607,41 @@
     mode: 0600
   when: inventory_hostname == "master-node-1"
 
-- name: Установка kube-proxy
+# ПЕРЕПИСАННЫЙ БЛОК: Установка kube-proxy через kubeadm
+- name: Установка kube-proxy addon
   block:
-    - name: Создание манифеста kube-proxy
-      copy:
-        content: |
-          apiVersion: v1
-          kind: Pod
-          metadata:
-            name: kube-proxy
-            namespace: kube-system
-            labels:
-              k8s-app: kube-proxy
-          spec:
-            hostNetwork: true
-            priorityClassName: system-node-critical
-            containers:
-            - name: kube-proxy
-              image: {{ registry_url }}/kube-proxy:v1.28.15
-              imagePullPolicy: IfNotPresent
-              command:
-              - /usr/local/bin/kube-proxy
-              - --config=/var/lib/kube-proxy/config.conf
-              - --hostname-override=$(NODE_NAME)
-              env:
-              - name: NODE_NAME
-                valueFrom:
-                  fieldRef:
-                    fieldPath: spec.nodeName
-              securityContext:
-                privileged: true
-              volumeMounts:
-              - mountPath: /var/lib/kube-proxy
-                name: kube-proxy
-              - mountPath: /run/xtables.lock
-                name: xtables-lock
-                readOnly: false
-              - mountPath: /lib/modules
-                name: lib-modules
-                readOnly: true
-            volumes:
-            - name: kube-proxy
-              hostPath:
-                path: /var/lib/kube-proxy
-                type: DirectoryOrCreate
-            - name: xtables-lock
-              hostPath:
-                path: /run/xtables.lock
-                type: FileOrCreate
-            - name: lib-modules
-              hostPath:
-                path: /lib/modules
-            - name: kube-proxy-config
-              hostPath:
-                path: /var/lib/kube-proxy/config.conf
-            serviceAccountName: kube-proxy
-        dest: /etc/kubernetes/manifests/kube-proxy.yaml
-        owner: root
-        group: root
-        mode: '0644'
-      become: yes
+    - name: Установка kube-proxy через kubeadm
+      command: |
+        kubeadm init phase addon kube-proxy \
+          --config /home/{{ k8s_user }}/kubeadm-config.yaml \
+          --kubeconfig /etc/kubernetes/admin.conf \
+          --control-plane-endpoint {{ cluster_vip }} \
+          --kubernetes-version v{{ kubernetes_version }} \
+          --apiserver-advertise-address {{ master_ips[inventory_hostname] }} \
+          --pod-network-cidr {{ pod_network_cidr }} \
+          --image-repository {{ registry_url }}
       when: inventory_hostname == "master-node-1"
 
-    - name: Создание конфигурации kube-proxy
-      copy:
-        content: |
-          apiVersion: kubeproxy.config.k8s.io/v1alpha1
-          kind: KubeProxyConfiguration
-          clientConnection:
-            kubeconfig: "/var/lib/kube-proxy/kubeconfig.conf"
-          clusterCIDR: "{{ pod_network_cidr }}"
-          mode: "iptables"
-          iptables:
-            masqueradeAll: false
-            masqueradeBit: 14
-            minSyncPeriod: 0s
-            syncPeriod: 30s
-          conntrack:
-            maxPerCore: 32768
-            min: 131072
-            tcpCloseWaitTimeout: 1h0m0s
-            tcpEstablishedTimeout: 24h0m0s
-        dest: /var/lib/kube-proxy/config.conf
-        owner: root
-        group: root
-        mode: '0644'
-      become: yes
+    - name: Ожидание запуска kube-proxy
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l k8s-app=kube-proxy --no-headers
+      register: kube_proxy_pods
+      until: kube_proxy_pods.stdout != ""
+      retries: 20
+      delay: 5
       when: inventory_hostname == "master-node-1"
 
-    - name: Создание kubeconfig для kube-proxy
-      copy:
-        content: |
-          apiVersion: v1
-          kind: Config
-          clusters:
-          - cluster:
-              certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-              server: https://127.0.0.1:6443
-            name: default
-          contexts:
-          - context:
-              cluster: default
-              namespace: default
-              user: default
-            name: default
-          current-context: default
-          users:
-          - name: default
-            user:
-              tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-        dest: /var/lib/kube-proxy/kubeconfig.conf
-        owner: root
-        group: root
-        mode: '0644'
-      become: yes
+    - name: Проверка статуса kube-proxy
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l k8s-app=kube-proxy -o wide
+      register: kube_proxy_status
       when: inventory_hostname == "master-node-1"
+
+    - name: Отображение статуса kube-proxy
+      debug:
+        var: kube_proxy_status.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
 
 - name: Установка Flannel CNI плагина
   block:

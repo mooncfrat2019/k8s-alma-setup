@@ -670,6 +670,7 @@
   shell: kubeadm init phase upload-certs --upload-certs
   register: cert_key
   changed_when: false
+  become: true
   when: inventory_hostname == "master-node-1"
 
 - name: Отображение полученного certificate key

@@ -145,10 +145,34 @@
     - kubeadm_config.changed
 
 - name: Ожидание стабилизации kubelet
-  wait_for:
-    path: /var/run/kubelet.sock
-    state: present
-    timeout: 30
+  block:
+    - name: Ожидание активности kubelet в systemd
+      systemd:
+        name: kubelet
+        state: started
+      register: kubelet_status
+      until: kubelet_status.status.ActiveState == "active"
+      retries: 10
+      delay: 5
+
+    - name: Ожидание сокета kubelet (альтернативное расположение)
+      wait_for:
+        path: "/var/run/kubelet.sock"
+        state: present
+        timeout: 10
+      ignore_errors: yes
+
+    - name: Проверка процесса kubelet
+      shell: ps aux | grep kubelet | grep -v grep
+      register: kubelet_process
+      failed_when: kubelet_process.rc != 0
+
+    - name: Проверка порта kubelet
+      wait_for:
+        port: 10250
+        host: "{{ ansible_host }}"
+        timeout: 30
+      ignore_errors: yes
   when: inventory_hostname == "master-node-1"
 
 - name: Проверка статуса kubelet перед инициализацией

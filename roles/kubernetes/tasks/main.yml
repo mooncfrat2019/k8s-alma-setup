@@ -223,11 +223,11 @@
       debug:
         var: etcd_manifest.stdout
 
-    - name: Ожидание запуска etcd контейнера
-      shell: |
-        timeout 120 bash -c 'until crictl ps --name etcd --state running 2>/dev/null | grep -q etcd; do echo "Waiting for etcd..."; sleep 10; done'
-      register: etcd_wait
-      failed_when: etcd_wait.rc != 0
+    #- name: Ожидание запуска etcd контейнера
+    #  shell: |
+    #    timeout 120 bash -c 'until crictl ps --name etcd --state running 2>/dev/null | grep -q etcd; do echo "Waiting for etcd..."; sleep 10; done'
+    #  register: etcd_wait
+    #  failed_when: etcd_wait.rc != 0
 
     - name: Проверка статуса etcd
       command: crictl ps --name etcd
@@ -237,24 +237,24 @@
       debug:
         var: etcd_status.stdout
 
-    - name: Получение логов etcd
-      shell: |
-        crictl logs $(crictl ps --name etcd -q) --tail=30
-      register: etcd_logs
+    #- name: Получение логов etcd
+    #  shell: |
+    #    crictl logs $(crictl ps --name etcd -q) --tail=30
+    #  register: etcd_logs
 
-    - name: Отображение логов etcd
-      debug:
-        var: etcd_logs.stdout
+   # - name: Отображение логов etcd
+   #   debug:
+   #     var: etcd_logs.stdout
 
-    - name: Проверка готовности etcd
-      shell: |
-        timeout 30 crictl logs $(crictl ps --name etcd -q) | grep "ready to serve client requests" || echo "etcd not ready yet"
-      register: etcd_ready_check
-      failed_when: false
+   # - name: Проверка готовности etcd
+   #   shell: |
+   #     timeout 30 crictl logs $(crictl ps --name etcd -q) | grep "ready to serve client requests" || echo "etcd not ready yet"
+   #   register: etcd_ready_check
+   #   failed_when: false
 
-    - name: Отображение готовности etcd
-      debug:
-        var: etcd_ready_check.stdout
+   # - name: Отображение готовности etcd
+   #   debug:
+   #     var: etcd_ready_check.stdout
   when: inventory_hostname == "master-node-1"
 
 - name: Ожидание инициализации первого мастера

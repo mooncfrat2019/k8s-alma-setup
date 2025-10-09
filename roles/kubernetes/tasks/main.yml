@@ -282,7 +282,7 @@
   become: yes
   when: inventory_hostname == "master-node-1"
 
-- name: Настройка kubelet сервиса для static pods
+- name: Создание systemd сервиса для kubelet
   copy:
     content: |
       [Unit]
@@ -295,8 +295,6 @@
       [Service]
       ExecStart=/usr/bin/kubelet \
         --config=/var/lib/kubelet/config.yaml \
-        --container-runtime=remote \
-        --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock \
         --pod-manifest-path=/etc/kubernetes/manifests \
         --cgroup-driver=systemd \
         --network-plugin=cni \
@@ -310,6 +308,23 @@
       [Install]
       WantedBy=multi-user.target
     dest: /lib/systemd/system/kubelet.service
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+
+- name: Создание базовой конфигурации kubelet
+  copy:
+    content: |
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      cgroupDriver: systemd
+      clusterDomain: cluster.local
+      clusterDNS:
+      - 10.96.0.10
+      staticPodPath: /etc/kubernetes/manifests
+      failSwapOn: false
+    dest: /var/lib/kubelet/config.yaml
     owner: root
     group: root
     mode: '0644'
@@ -329,7 +344,7 @@
 
 - name: Ожидание запуска etcd
   shell: |
-    timeout 180 bash -c '
+    timeout 300 bash -c '
       until crictl ps --name etcd --state running 2>/dev/null | grep -q etcd; do 
         echo "Waiting for etcd..."; 
         sleep 10; 
@@ -388,7 +403,6 @@
           - --service-cluster-ip-range={{ service_cidr }}
           - --tls-cert-file=/etc/kubernetes/pki/apiserver.crt
           - --tls-private-key-file=/etc/kubernetes/pki/apiserver.key
-          - --cloud-provider=external
           image: {{ registry_url }}/kube-apiserver:v1.28.15
           imagePullPolicy: IfNotPresent
           livenessProbe:
@@ -456,7 +470,7 @@
 
 - name: Ожидание запуска kube-apiserver
   shell: |
-    timeout 180 bash -c '
+    timeout 300 bash -c '
       until crictl ps --name kube-apiserver --state running 2>/dev/null | grep -q kube-apiserver; do 
         echo "Waiting for kube-apiserver..."; 
         sleep 10; 
@@ -468,7 +482,7 @@
 
 - name: Ожидание готовности API
   shell: |
-    timeout 180 bash -c '
+    timeout 300 bash -c '
       until curl -k https://127.0.0.1:6443/healthz 2>/dev/null; do
         echo "Waiting for API server to be healthy...";
         sleep 10;

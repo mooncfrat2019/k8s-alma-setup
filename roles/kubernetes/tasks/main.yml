@@ -612,9 +612,9 @@
     kubectl taint nodes --all node-role.kubernetes.io/control-plane-
   when: inventory_hostname == "master-node-1"
 
-- name: Установка Calico CNI плагина
+- name: Отметка узла как готового
   command: |
-    kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
+    kubectl --kubeconfig={{ k8s_home }}/.kube/config taint nodes --all node-role.kubernetes.io/control-plane- --overwrite
   when: inventory_hostname == "master-node-1"
 
 - name: Получение команды join

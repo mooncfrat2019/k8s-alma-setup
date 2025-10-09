@@ -655,22 +655,42 @@
     msg: "Taint result: {{ taint_result.stdout }}{{ taint_result.stderr }}"
   when: inventory_hostname == "master-node-1"
 
-- name: Получение команды join
+- name: Получение команды join для control-plane
   command: kubeadm token create --print-join-command
   register: join_command
   changed_when: false
   when: inventory_hostname == "master-node-1"
 
-- name: Получение certificate key
-  command: kubeadm init phase upload-certs --upload-certs
+- name: Отображение полученной join команды
+  debug:
+    var: join_command.stdout
+  when: inventory_hostname == "master-node-1"
+
+- name: Получение certificate key с sudo
+  shell: sudo kubeadm init phase upload-certs --upload-certs
   register: cert_key
   changed_when: false
   when: inventory_hostname == "master-node-1"
 
+- name: Отображение полученного certificate key
+  debug:
+    var: cert_key.stdout
+  when: inventory_hostname == "master-node-1"
+
+- name: Извлечение certificate key из вывода
+  set_fact:
+    certificate_key: "{{ cert_key.stdout | regex_search('[a-f0-9]{64}') | first }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение извлеченного certificate key
+  debug:
+    var: certificate_key
+  when: inventory_hostname == "master-node-1"
+
 - name: Сохранение команд join в переменные
   set_fact:
-    control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }} --control-plane --certificate-key {{ cert_key.stdout.split()[3] }}"
-    worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }}"
+    control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token sujx2i.y16zxicq1bbmfgs4 --discovery-token-ca-cert-hash sha256:069317430606299c62e5a0afa1013fc3136d5c6b11ef8bb223f8987da0418b2d --control-plane --certificate-key {{ certificate_key }}"
+    worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token sujx2i.y16zxicq1bbmfgs4 --discovery-token-ca-cert-hash sha256:069317430606299c62e5a0afa1013fc3136d5c6b11ef8bb223f8987da0418b2d"
   when: inventory_hostname == "master-node-1"
 
 - name: Присоединение других мастер-узлов

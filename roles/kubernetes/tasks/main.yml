@@ -667,7 +667,7 @@
   when: inventory_hostname == "master-node-1"
 
 - name: Получение certificate key с sudo
-  shell: sudo kubeadm init phase upload-certs --upload-certs
+  shell: kubeadm init phase upload-certs --upload-certs
   register: cert_key
   changed_when: false
   when: inventory_hostname == "master-node-1"

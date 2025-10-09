@@ -119,6 +119,80 @@
       kube-vip
   become: yes
 
+- name: Полная очистка предыдущей конфигурации Kubernetes
+  block:
+    - name: Остановка kubelet
+      systemd:
+        name: kubelet
+        state: stopped
+      become: yes
+
+    - name: Остановка containerd
+      systemd:
+        name: containerd
+        state: stopped
+      become: yes
+
+    - name: Удаление всех контейнеров
+      shell: |
+        crictl ps -aq | xargs -I {} crictl stop {} 2>/dev/null || true
+        crictl ps -aq | xargs -I {} crictl rm {} 2>/dev/null || true
+        sleep 5
+      become: yes
+
+    - name: Полный сброс kubeadm
+      shell: |
+        kubeadm reset -f
+      args:
+        warn: false
+      become: yes
+      ignore_errors: yes
+
+    - name: Очистка всех конфигурационных файлов
+      shell: |
+        rm -rf /etc/kubernetes
+        rm -rf /var/lib/etcd
+        rm -rf /var/lib/kubelet
+        rm -rf /var/lib/cni
+        rm -rf /etc/cni
+        rm -rf $HOME/.kube
+        rm -rf /etc/systemd/system/kubelet.service.d
+      args:
+        warn: false
+      become: yes
+
+    #- name: Очистка сетевых интерфейсов
+    #  shell: |
+    #    ip link delete cni0 2>/dev/null || true
+    #    ip link delete flannel.1 2>/dev/null || true
+    #    ip link delete docker0 2>/dev/null || true
+    #    iptables -F && iptables -t nat -F && iptables -t mangle -F && iptables -X
+    #  args:
+    #    warn: false
+    #  become: yes
+
+    - name: Перезапуск containerd
+      systemd:
+        name: containerd
+        state: started
+      become: yes
+
+    - name: Создание чистых директорий
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      loop:
+        - /etc/kubernetes
+        - /var/lib/etcd
+        - /var/lib/kubelet
+        - /etc/kubernetes/manifests
+        - /etc/kubernetes/pki
+      become: yes
+  when: inventory_hostname == "master-node-1"
+
 - name: Запуск и включение kubelet
   systemd:
     name: kubelet
@@ -126,69 +200,32 @@
     enabled: yes
     daemon_reload: yes
 
-- name: Создание конфигурации kubeadm для первого мастера
+- name: Создание новой конфигурации kubeadm для первого мастера
   template:
     src: kubeadm-config.yaml.j2
     dest: "/home/{{ k8s_user }}/kubeadm-config.yaml"
     owner: "{{ k8s_user }}"
     group: "{{ k8s_group }}"
     mode: 0644
-  register: kubeadm_config
   when: inventory_hostname == "master-node-1"
 
-- name: Предварительная настройка для etcd
-  block:
-    - name: Создание и настройка директории etcd
-      file:
-        path: /var/lib/etcd
-        state: directory
-        owner: root
-        group: root
-        mode: '0700'
-      become: yes
-
-    - name: Проверка свободных портов etcd
-      shell: |
-        ss -tlnp | grep ":2379" && echo "Port 2379 is occupied" || echo "Port 2379 is free"
-        ss -tlnp | grep ":2380" && echo "Port 2380 is occupied" || echo "Port 2380 is free"
-      register: port_check
-      failed_when: false
-
-    - name: Отображение проверки портов
-      debug:
-        var: port_check.stdout
-
-    - name: Остановка kubelet перед инициализацией
-      systemd:
-        name: kubelet
-        state: stopped
-      become: yes
-
-    - name: Очистка предыдущей конфигурации etcd
-      shell: |
-        rm -rf /var/lib/etcd/member || true
-        rm -rf /etc/kubernetes/pki/etcd || true
-      become: yes
-
-    - name: Проверка сетевых интерфейсов
-      shell: |
-        ip addr show | grep "{{ master_ips[inventory_hostname] }}" || echo "IP address not found"
-        ping -c 3 {{ master_ips[inventory_hostname] }} || echo "Ping failed"
-      register: network_check
-      failed_when: false
-
-    - name: Отображение сетевой проверки
-      debug:
-        var: network_check.stdout
+- name: Проверка содержимого новой конфигурации
+  command: cat "/home/{{ k8s_user }}/kubeadm-config.yaml"
+  register: kubeadm_config_content
   when: inventory_hostname == "master-node-1"
 
-- name: Инициализация кластера на первом мастере
+- name: Отображение конфигурации kubeadm
+  debug:
+    var: kubeadm_config_content.stdout
+  when: inventory_hostname == "master-node-1"
+
+- name: Инициализация кластера с новой конфигурацией
   command: |
     kubeadm init \
       --config /home/{{ k8s_user }}/kubeadm-config.yaml \
       --upload-certs \
-      --v=3 \
-      --ignore-preflight-errors=all
+      --ignore-preflight-errors=all \
+      --v=5
   args:
     creates: /etc/kubernetes/admin.conf
   register: kubeadm_init
@@ -197,64 +234,74 @@
 - name: Отображение результатов инициализации
   debug:
     var: kubeadm_init
-  when:
-    - inventory_hostname == "master-node-1"
-    - kubeadm_init is defined
-
-- name: Запуск kubelet после инициализации
-  systemd:
-    name: kubelet
-    state: started
   when: inventory_hostname == "master-node-1"
 
-- name: Диагностика после инициализации
+- name: Проверка применения новой конфигурации etcd
   block:
     - name: Ожидание создания манифеста etcd
       wait_for:
         path: /etc/kubernetes/manifests/etcd.yaml
         state: present
-        timeout: 30
+        timeout: 60
 
-    - name: Проверка манифеста etcd
+    - name: Проверка содержимого манифеста etcd
       command: cat /etc/kubernetes/manifests/etcd.yaml
-      register: etcd_manifest
+      register: etcd_manifest_content
 
     - name: Отображение манифеста etcd
       debug:
-        var: etcd_manifest.stdout
+        var: etcd_manifest_content.stdout
 
-    #- name: Ожидание запуска etcd контейнера
-    #  shell: |
-    #    timeout 120 bash -c 'until crictl ps --name etcd --state running 2>/dev/null | grep -q etcd; do echo "Waiting for etcd..."; sleep 10; done'
-    #  register: etcd_wait
-    #  failed_when: etcd_wait.rc != 0
+    - name: Проверка listen-urls в манифесте
+      shell: |
+        echo "=== listen-client-urls ==="
+        grep "listen-client-urls" /etc/kubernetes/manifests/etcd.yaml
+        echo "=== listen-peer-urls ==="
+        grep "listen-peer-urls" /etc/kubernetes/manifests/etcd.yaml
+      register: etcd_urls_check
 
-    - name: Проверка статуса etcd
-      command: crictl ps --name etcd
-      register: etcd_status
-
-    - name: Отображение статуса etcd
+    - name: Отображение проверки URLs
       debug:
-        var: etcd_status.stdout
+        var: etcd_urls_check.stdout
+  when: inventory_hostname == "master-node-1"
 
-    #- name: Получение логов etcd
-    #  shell: |
-    #    crictl logs $(crictl ps --name etcd -q) --tail=30
-    #  register: etcd_logs
+- name: Ожидание запуска etcd с новой конфигурацией
+  block:
+    - name: Ожидание запуска etcd контейнера
+      shell: |
+        timeout 180 bash -c '
+          until crictl ps --name etcd --state running 2>/dev/null | grep -q etcd; do 
+            echo "Waiting for etcd container to start..."; 
+            sleep 10; 
+          done
+          echo "etcd container is running"
+        '
+      register: etcd_container_wait
+      failed_when: etcd_container_wait.rc != 0
 
-   # - name: Отображение логов etcd
-   #   debug:
-   #     var: etcd_logs.stdout
+    - name: Ожидание готовности etcd
+      shell: |
+        timeout 240 bash -c '
+          until crictl logs $(crictl ps --name etcd -q) 2>/dev/null | grep -q "ready to serve client requests"; do
+            echo "Waiting for etcd to be ready...";
+            sleep 10;
+          done
+          echo "etcd is ready to serve requests"
+        '
+      register: etcd_ready_wait
+      failed_when: etcd_ready_wait.rc != 0
 
-   # - name: Проверка готовности etcd
-   #   shell: |
-   #     timeout 30 crictl logs $(crictl ps --name etcd -q) | grep "ready to serve client requests" || echo "etcd not ready yet"
-   #   register: etcd_ready_check
-   #   failed_when: false
+    - name: Проверка финального статуса etcd
+      shell: |
+        echo "=== etcd container status ==="
+        crictl ps --name etcd
+        echo "=== etcd logs (last 10 lines) ==="
+        crictl logs $(crictl ps --name etcd -q) --tail=10
+      register: etcd_final_status
 
-   # - name: Отображение готовности etcd
-   #   debug:
-   #     var: etcd_ready_check.stdout
+    - name: Отображение финального статуса
+      debug:
+        var: etcd_final_status.stdout
   when: inventory_hostname == "master-node-1"
 
 - name: Ожидание инициализации первого мастера

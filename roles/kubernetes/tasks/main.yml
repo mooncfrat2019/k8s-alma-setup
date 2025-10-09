@@ -613,7 +613,6 @@
     - name: Установка kube-proxy через kubeadm
       command: |
         kubeadm init phase addon kube-proxy \
-          --config /home/{{ k8s_user }}/kubeadm-config.yaml \
           --kubeconfig /etc/kubernetes/admin.conf \
           --control-plane-endpoint {{ cluster_vip }} \
           --kubernetes-version v{{ kubernetes_version }} \

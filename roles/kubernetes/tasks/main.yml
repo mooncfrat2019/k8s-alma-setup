@@ -174,13 +174,6 @@
     mode: 0644
   when: inventory_hostname == "master-node-1"
 
-- name: Инициализация кластера на первом мастере
-  command: |
-    kubeadm init --config /home/{{ k8s_user }}/kubeadm-config.yaml --upload-certs
-  args:
-    creates: /etc/kubernetes/admin.conf
-  when: inventory_hostname == "master-node-1"
-
 - name: Настройка kubectl для первого мастера
   block:
     - name: Копирование конфигурации для пользователя
@@ -192,10 +185,26 @@
         group: "{{ k8s_group }}"
         mode: 0600
 
+    - name: Ожидание готовности Kubernetes API
+      wait_for:
+        host: "{{ cluster_vip }}"
+        port: 6443
+        delay: 10
+        timeout: 300
+
+    - name: Проверка готовности control-plane
+      command: kubectl get nodes
+      register: node_status
+      until: node_status.rc == 0 and "master-node-1" in node_status.stdout and "Ready" in node_status.stdout
+      retries: 30
+      delay: 10
+
     - name: Получение команды join для control-plane
       command: kubeadm token create --print-join-command
       register: join_command
       changed_when: false
+      retries: 5
+      delay: 30
 
     - name: Получение certificate key
       command: kubeadm init phase upload-certs --upload-certs

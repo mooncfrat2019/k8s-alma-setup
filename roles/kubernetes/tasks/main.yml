@@ -1,5 +1,5 @@
 ---
-- name: Установка containerd из локального rpm пакета
+- name: Установка и настройка containerd
   block:
     - name: Копирование rpm пакета containerd на сервер
       copy:
@@ -31,6 +31,13 @@
           [plugins]
             [plugins."io.containerd.grpc.v1.cri"]
               sandbox_image = "{{ registry_url }}/pause:3.9"
+              [plugins."io.containerd.grpc.v1.cri".registry]
+                [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+                  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."89.208.208.139:5000"]
+                    endpoint = ["http://89.208.208.139:5000"]
+                [plugins."io.containerd.grpc.v1.cri".registry.configs]
+                  [plugins."io.containerd.grpc.v1.cri".registry.configs."89.208.208.139:5000".tls]
+                    insecure_skip_verify = true
               [plugins."io.containerd.grpc.v1.cri".containerd]
                 snapshotter = "overlayfs"
                 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
@@ -51,44 +58,7 @@
         daemon_reload: yes
       become: yes
 
-    - name: Настройка insecure registry в containerd
-      copy:
-        content: |
-          version = 2
-          root = "/var/lib/containerd"
-          state = "/run/containerd"
-          [grpc]
-            address = "/run/containerd/containerd.sock"
-          [plugins]
-            [plugins."io.containerd.grpc.v1.cri"]
-              sandbox_image = "{{ registry_url }}/pause:3.9"
-              [plugins."io.containerd.grpc.v1.cri".registry]
-                [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
-                  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."89.208.208.139:5000"]
-                    endpoint = ["http://89.208.208.139:5000"]
-                [plugins."io.containerd.grpc.v1.cri".registry.configs]
-                  [plugins."io.containerd.grpc.v1.cri".registry.configs."89.208.208.139:5000".tls]
-                    insecure_skip_verify = true
-              [plugins."io.containerd.grpc.v1.cri".containerd]
-                snapshotter = "overlayfs"
-                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
-                  runtime_type = "io.containerd.runc.v2"
-                  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
-                    SystemdCgroup = true
-        dest: /etc/containerd/config.toml
-        owner: root
-        group: root
-        mode: '0644'
-      become: yes
-
-    - name: Перезапуск containerd после изменения конфига
-      systemd:
-        name: containerd
-        state: restarted
-        daemon_reload: yes
-      become: yes
-
-    - name: Ожидание готовности containerd после перезапуска
+    - name: Ожидание готовности containerd
       wait_for:
         path: /var/run/containerd/containerd.sock
         state: present
@@ -101,7 +71,7 @@
       changed_when: false
       failed_when: containerd_check.rc != 0
 
-- name: Установка crictl
+- name: Установка и настройка crictl
   block:
     - name: Копирование и распаковка crictl
       unarchive:
@@ -110,7 +80,6 @@
         owner: root
         group: root
         mode: '0755'
-        remote_src: no  # Файл уже локальный в ansible
       become: yes
 
     - name: Настройка конфига crictl
@@ -135,7 +104,7 @@
   shell: apt-get update
   become: yes
 
-- name: Установка Kubernetes компонентов через shell
+- name: Установка Kubernetes компонентов
   shell: |
     apt-get install -y \
       kubernetes1.28-client \
@@ -148,15 +117,6 @@
       python3-module-kubernetes-client \
       kube-vip
   become: yes
-
-#- name: Запрет обновления пакетов Kubernetes
-#  apt:
-#    name: "{{ item }}"
-#    state: held
-#  loop:
-#    - kubelet
-#    - kubeadm
-#    - kubectl
 
 - name: Запуск и включение kubelet
   systemd:
@@ -172,6 +132,44 @@
     owner: "{{ k8s_user }}"
     group: "{{ k8s_group }}"
     mode: 0644
+  register: kubeadm_config
+  when: inventory_hostname == "master-node-1"
+
+- name: Перезапуск kubelet если конфигурация изменилась
+  systemd:
+    name: kubelet
+    state: restarted
+    daemon_reload: yes
+  when:
+    - inventory_hostname == "master-node-1"
+    - kubeadm_config.changed
+
+- name: Ожидание стабилизации kubelet
+  wait_for:
+    path: /var/run/kubelet.sock
+    state: present
+    timeout: 30
+  when: inventory_hostname == "master-node-1"
+
+- name: Проверка статуса kubelet перед инициализацией
+  systemd:
+    name: kubelet
+    state: started
+  register: kubelet_status
+  failed_when: kubelet_status.status.ActiveState != "active"
+  when: inventory_hostname == "master-node-1"
+
+- name: Инициализация кластера на первом мастере
+  command: |
+    kubeadm init --config /home/{{ k8s_user }}/kubeadm-config.yaml --upload-certs
+  args:
+    creates: /etc/kubernetes/admin.conf
+  when: inventory_hostname == "master-node-1"
+
+- name: Ожидание инициализации первого мастера
+  wait_for:
+    path: /etc/kubernetes/admin.conf
+    state: present
   when: inventory_hostname == "master-node-1"
 
 - name: Настройка kubectl для первого мастера
@@ -231,12 +229,6 @@
       set_fact:
         control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }} --control-plane --certificate-key {{ cert_key.stdout.split()[3] }}"
         worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }}"
-  when: inventory_hostname == "master-node-1"
-
-- name: Ожидание инициализации первого мастера
-  wait_for:
-    path: /etc/kubernetes/admin.conf
-    state: present
   when: inventory_hostname == "master-node-1"
 
 - name: Присоединение других мастер-узлов

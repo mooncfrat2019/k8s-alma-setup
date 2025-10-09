@@ -655,6 +655,16 @@
     msg: "Taint result: {{ taint_result.stdout }}{{ taint_result.stderr }}"
   when: inventory_hostname == "master-node-1"
 
+- name: Настройка RBAC для разрешения анонимного доступа к cluster-info
+  command: |
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf create clusterrolebinding kubeadm-node-clusterinfo --clusterrole=cluster-info-reader --group=system:unauthenticated --group=system:authenticated
+  when: inventory_hostname == "master-node-1"
+
+- name: Проверка доступа к cluster-info
+  command: |
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get configmap cluster-info -n kube-public
+  when: inventory_hostname == "master-node-1"
+
 - name: Получение команды join для control-plane
   command: kubeadm token create --print-join-command
   register: join_command

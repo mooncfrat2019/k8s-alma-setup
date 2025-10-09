@@ -663,6 +663,8 @@
 - name: Настройка RBAC для разрешения анонимного доступа к cluster-info
   command: |
     kubectl --kubeconfig=/etc/kubernetes/admin.conf create clusterrolebinding kubeadm-node-clusterinfo --clusterrole=cluster-info-reader --group=system:unauthenticated --group=system:authenticated
+  failed_when: false
+  changed_when: false
   when: inventory_hostname == "master-node-1"
 
 - name: Проверка доступа к cluster-info

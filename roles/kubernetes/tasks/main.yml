@@ -200,7 +200,7 @@
               - --peer-trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt
               - --snapshot-count=10000
               - --trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt
-              image: {{ registry_url }}/etcd:3.5.9-0
+              image: {{ registry_url }}/etcd:3.5.15-0
               imagePullPolicy: IfNotPresent
               livenessProbe:
                 failureThreshold: 8

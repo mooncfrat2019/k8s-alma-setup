@@ -141,10 +141,7 @@
       become: yes
 
     - name: Полный сброс kubeadm
-      shell: |
-        kubeadm reset -f
-      args:
-        warn: false
+      shell: kubeadm reset -f
       become: yes
       ignore_errors: yes
 
@@ -157,8 +154,6 @@
         rm -rf /etc/cni
         rm -rf $HOME/.kube
         rm -rf /etc/systemd/system/kubelet.service.d
-      args:
-        warn: false
       become: yes
 
     #- name: Очистка сетевых интерфейсов

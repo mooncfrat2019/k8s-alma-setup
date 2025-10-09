@@ -295,9 +295,6 @@
       [Service]
       ExecStart=/usr/bin/kubelet \
         --config=/var/lib/kubelet/config.yaml \
-        --pod-manifest-path=/etc/kubernetes/manifests \
-        --cgroup-driver=systemd \
-        --network-plugin=cni \
         --pod-infra-container-image={{ registry_url }}/pause:3.9 \
         --fail-swap-on=false \
         --v=2

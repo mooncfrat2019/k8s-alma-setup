@@ -607,27 +607,169 @@
     mode: 0600
   when: inventory_hostname == "master-node-1"
 
-# ПЕРЕПИСАННЫЙ БЛОК: Установка kube-proxy через kubeadm
-- name: Установка kube-proxy addon
+# ИСПРАВЛЕННЫЙ БЛОК: Установка kube-proxy с правильным kubeconfig
+- name: Установка kube-proxy с правильной конфигурацией
   block:
-    - name: Установка kube-proxy через kubeadm
+    - name: Создание ServiceAccount для kube-proxy
       command: |
-        kubeadm init phase addon kube-proxy \
-          --kubeconfig /etc/kubernetes/admin.conf \
-          --control-plane-endpoint {{ cluster_vip }} \
-          --kubernetes-version v{{ kubernetes_version }} \
-          --apiserver-advertise-address {{ master_ips[inventory_hostname] }} \
-          --pod-network-cidr {{ pod_network_cidr }} \
-          --image-repository {{ registry_url }}
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - <<EOF
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: kube-proxy
+          namespace: kube-system
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для kube-proxy
+      command: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - <<EOF
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kube-proxy
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: system:node-proxier
+        subjects:
+        - kind: ServiceAccount
+          name: kube-proxy
+          namespace: kube-system
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Удаление старого kube-proxy если существует
+      command: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf delete daemonset kube-proxy -n kube-system --ignore-not-found=true
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание DaemonSet для kube-proxy с монтированием pki
+      command: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - <<EOF
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          labels:
+            k8s-app: kube-proxy
+          name: kube-proxy
+          namespace: kube-system
+        spec:
+          selector:
+            matchLabels:
+              k8s-app: kube-proxy
+          template:
+            metadata:
+              labels:
+                k8s-app: kube-proxy
+            spec:
+              containers:
+              - command:
+                - /usr/local/bin/kube-proxy
+                - --config=/var/lib/kube-proxy/config.conf
+                - --hostname-override=\$(NODE_NAME)
+                env:
+                - name: NODE_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
+                image: {{ registry_url }}/kube-proxy:v1.28.15
+                imagePullPolicy: IfNotPresent
+                name: kube-proxy
+                securityContext:
+                  privileged: true
+                volumeMounts:
+                - mountPath: /var/lib/kube-proxy
+                  name: kube-proxy
+                - mountPath: /run/xtables.lock
+                  name: xtables-lock
+                - mountPath: /lib/modules
+                  name: lib-modules
+                  readOnly: true
+                - mountPath: /etc/kubernetes/pki
+                  name: k8s-certs
+                  readOnly: true
+              hostNetwork: true
+              serviceAccountName: kube-proxy
+              tolerations:
+              - key: CriticalAddonsOnly
+                operator: Exists
+              - operator: Exists
+              volumes:
+              - configMap:
+                  defaultMode: 420
+                  name: kube-proxy
+                name: kube-proxy
+              - hostPath:
+                  path: /run/xtables.lock
+                  type: FileOrCreate
+                name: xtables-lock
+              - hostPath:
+                  path: /lib/modules
+                name: lib-modules
+              - hostPath:
+                  path: /etc/kubernetes/pki
+                  type: Directory
+                name: k8s-certs
+          updateStrategy:
+            type: RollingUpdate
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ConfigMap для kube-proxy
+      command: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - <<EOF
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: kube-proxy
+          namespace: kube-system
+          labels:
+            app: kube-proxy
+        data:
+          config.conf: |
+            apiVersion: kubeproxy.config.k8s.io/v1alpha1
+            kind: KubeProxyConfiguration
+            clientConnection:
+              kubeconfig: /var/lib/kube-proxy/kubeconfig.conf
+            clusterCIDR: "{{ pod_network_cidr }}"
+            mode: "iptables"
+            iptables:
+              masqueradeAll: false
+              masqueradeBit: 14
+              minSyncPeriod: 0s
+              syncPeriod: 30s
+            conntrack:
+              maxPerCore: 32768
+              min: 131072
+              tcpCloseWaitTimeout: 1h0m0s
+              tcpEstablishedTimeout: 24h0m0s
+          kubeconfig.conf: |
+            apiVersion: v1
+            kind: Config
+            clusters:
+            - cluster:
+                certificate-authority: /etc/kubernetes/pki/ca.crt
+                server: https://{{ cluster_vip }}:6443
+              name: default
+            contexts:
+            - context:
+                cluster: default
+                namespace: default
+                user: default
+              name: default
+            current-context: default
+            users:
+            - name: default
+              user:
+                tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+        EOF
       when: inventory_hostname == "master-node-1"
 
     - name: Ожидание запуска kube-proxy
       shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l k8s-app=kube-proxy --no-headers
-      register: kube_proxy_pods
-      until: kube_proxy_pods.stdout != ""
-      retries: 20
-      delay: 5
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf wait --for=condition=ready pod -l k8s-app=kube-proxy -n kube-system --timeout=120s
+      register: kube_proxy_wait
       when: inventory_hostname == "master-node-1"
 
     - name: Проверка статуса kube-proxy
@@ -639,6 +781,17 @@
     - name: Отображение статуса kube-proxy
       debug:
         var: kube_proxy_status.stdout
+      when: inventory_hostname == "master-node-1"
+
+    - name: Проверка логов kube-proxy
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf logs -n kube-system -l k8s-app=kube-proxy --tail=5
+      register: kube_proxy_logs
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение логов kube-proxy
+      debug:
+        var: kube_proxy_logs.stdout
       when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 

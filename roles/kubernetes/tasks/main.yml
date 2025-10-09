@@ -782,17 +782,6 @@
       debug:
         var: kube_proxy_status.stdout
       when: inventory_hostname == "master-node-1"
-
-    - name: Проверка логов kube-proxy
-      shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf logs -n kube-system -l k8s-app=kube-proxy --tail=5
-      register: kube_proxy_logs
-      when: inventory_hostname == "master-node-1"
-
-    - name: Отображение логов kube-proxy
-      debug:
-        var: kube_proxy_logs.stdout
-      when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 
 - name: Установка Flannel CNI плагина

@@ -583,67 +583,18 @@
     enabled: yes
   become: yes
 
-- name: Ожидание запуска всех компонентов
-  block:
-    - name: Ожидание запуска etcd
-      shell: |
-        timeout 300 bash -c '
-          until crictl ps --name etcd --state running 2>/dev/null | grep -q etcd; do 
-            echo "Waiting for etcd..."; 
-            sleep 10; 
-          done
-          echo "etcd container is running"
-        
-          until crictl logs $(crictl ps --name etcd -q) 2>/dev/null | grep -q "ready to serve client requests"; do
-            echo "Waiting for etcd to be ready...";
-            sleep 10;
-          done
-          echo "etcd is ready to serve requests"
-        '
-      register: etcd_wait
+- name: Проверка здоровья Kubernetes API
+  shell: |
+    curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1:6443/healthz
+  register: api_health_check
+  failed_when: api_health_check.stdout != "200"
+  retries: 30
+  delay: 10
+  when: inventory_hostname == "master-node-1"
 
-    - name: Ожидание запуска kube-apiserver
-      shell: |
-        timeout 300 bash -c '
-          until crictl ps --name kube-apiserver --state running 2>/dev/null | grep -q kube-apiserver; do 
-            echo "Waiting for kube-apiserver..."; 
-            sleep 10; 
-          done
-          echo "kube-apiserver is running"
-        '
-      register: api_wait
-
-    - name: Ожидание готовности API
-      shell: |
-        timeout 300 bash -c '
-          until curl -k https://127.0.0.1:6443/healthz 2>/dev/null; do
-            echo "Waiting for API server to be healthy...";
-            sleep 10;
-          done
-          echo "API server is healthy"
-        '
-
-    - name: Ожидание запуска controller-manager
-      shell: |
-        timeout 180 bash -c '
-          until crictl ps --name kube-controller-manager --state running 2>/dev/null | grep -q controller; do 
-            echo "Waiting for controller-manager..."; 
-            sleep 10; 
-          done
-          echo "controller-manager is running"
-        '
-      register: controller_wait
-
-    - name: Ожидание запуска scheduler
-      shell: |
-        timeout 180 bash -c '
-          until crictl ps --name kube-scheduler --state running 2>/dev/null | grep -q scheduler; do 
-            echo "Waiting for scheduler..."; 
-            sleep 10; 
-          done
-          echo "scheduler is running"
-        '
-      register: scheduler_wait
+- name: Отображение статуса проверки API
+  debug:
+    msg: "Kubernetes API health check: {{ api_health_check.stdout }}"
   when: inventory_hostname == "master-node-1"
 
 - name: Копирование конфигурации для пользователя
@@ -661,9 +612,9 @@
     kubectl taint nodes --all node-role.kubernetes.io/control-plane-
   when: inventory_hostname == "master-node-1"
 
-- name: Установка CNI плагина
+- name: Установка Calico CNI плагина
   command: |
-    kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+    kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
   when: inventory_hostname == "master-node-1"
 
 - name: Получение команды join

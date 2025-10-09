@@ -607,38 +607,347 @@
     mode: 0600
   when: inventory_hostname == "master-node-1"
 
-- name: Установка Calico CNI плагина
+- name: Установка kube-proxy
   block:
-    - name: Скачивание манифеста Calico
-      get_url:
-        url: https://raw.githubusercontent.com/projectcalico/calico/v3.27.2/manifests/calico.yaml
-        dest: /tmp/calico.yaml
+    - name: Создание манифеста kube-proxy
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: kube-proxy
+            namespace: kube-system
+            labels:
+              k8s-app: kube-proxy
+          spec:
+            hostNetwork: true
+            priorityClassName: system-node-critical
+            containers:
+            - name: kube-proxy
+              image: {{ registry_url }}/kube-proxy:v1.28.15
+              imagePullPolicy: IfNotPresent
+              command:
+              - /usr/local/bin/kube-proxy
+              - --config=/var/lib/kube-proxy/config.conf
+              - --hostname-override=$(NODE_NAME)
+              env:
+              - name: NODE_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: spec.nodeName
+              securityContext:
+                privileged: true
+              volumeMounts:
+              - mountPath: /var/lib/kube-proxy
+                name: kube-proxy
+              - mountPath: /run/xtables.lock
+                name: xtables-lock
+                readOnly: false
+              - mountPath: /lib/modules
+                name: lib-modules
+                readOnly: true
+            volumes:
+            - name: kube-proxy
+              hostPath:
+                path: /var/lib/kube-proxy
+                type: DirectoryOrCreate
+            - name: xtables-lock
+              hostPath:
+                path: /run/xtables.lock
+                type: FileOrCreate
+            - name: lib-modules
+              hostPath:
+                path: /lib/modules
+            - name: kube-proxy-config
+              hostPath:
+                path: /var/lib/kube-proxy/config.conf
+            serviceAccountName: kube-proxy
+        dest: /etc/kubernetes/manifests/kube-proxy.yaml
+        owner: root
+        group: root
         mode: '0644'
+      become: yes
+      when: inventory_hostname == "master-node-1"
 
-    - name: Применение манифеста Calico
+    - name: Создание конфигурации kube-proxy
+      copy:
+        content: |
+          apiVersion: kubeproxy.config.k8s.io/v1alpha1
+          kind: KubeProxyConfiguration
+          clientConnection:
+            kubeconfig: "/var/lib/kube-proxy/kubeconfig.conf"
+          clusterCIDR: "{{ pod_network_cidr }}"
+          mode: "iptables"
+          iptables:
+            masqueradeAll: false
+            masqueradeBit: 14
+            minSyncPeriod: 0s
+            syncPeriod: 30s
+          conntrack:
+            maxPerCore: 32768
+            min: 131072
+            tcpCloseWaitTimeout: 1h0m0s
+            tcpEstablishedTimeout: 24h0m0s
+        dest: /var/lib/kube-proxy/config.conf
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание kubeconfig для kube-proxy
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - cluster:
+              certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              server: https://127.0.0.1:6443
+            name: default
+          contexts:
+          - context:
+              cluster: default
+              namespace: default
+              user: default
+            name: default
+          current-context: default
+          users:
+          - name: default
+            user:
+              tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+        dest: /var/lib/kube-proxy/kubeconfig.conf
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+      when: inventory_hostname == "master-node-1"
+
+- name: Установка Flannel CNI плагина
+  block:
+    - name: Создание манифеста Flannel
+      copy:
+        content: |
+          ---
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: kube-flannel
+            labels:
+              pod-security.kubernetes.io/enforce: privileged
+          ---
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: flannel
+            namespace: kube-flannel
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRole
+          metadata:
+            name: flannel
+          rules:
+          - apiGroups:
+            - ""
+            resources:
+            - pods
+            verbs:
+            - get
+          - apiGroups:
+            - ""
+            resources:
+            - nodes
+            verbs:
+            - list
+            - watch
+          - apiGroups:
+            - ""
+            resources:
+            - nodes/status
+            verbs:
+            - patch
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: flannel
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: flannel
+          subjects:
+          - kind: ServiceAccount
+            name: flannel
+            namespace: kube-flannel
+          ---
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: kube-flannel-cfg
+            namespace: kube-flannel
+            labels:
+              tier: node
+              app: flannel
+          data:
+            cni-conf.json: |
+              {
+                "name": "cbr0",
+                "cniVersion": "0.3.1",
+                "plugins": [
+                  {
+                    "type": "flannel",
+                    "delegate": {
+                      "hairpinMode": true,
+                      "isDefaultGateway": true
+                    }
+                  },
+                  {
+                    "type": "portmap",
+                    "capabilities": {
+                      "portMappings": true
+                    }
+                  }
+                ]
+              }
+            net-conf.json: |
+              {
+                "Network": "{{ pod_network_cidr }}",
+                "Backend": {
+                  "Type": "vxlan"
+                }
+              }
+          ---
+          apiVersion: apps/v1
+          kind: DaemonSet
+          metadata:
+            name: kube-flannel-ds
+            namespace: kube-flannel
+            labels:
+              tier: node
+              app: flannel
+          spec:
+            selector:
+              matchLabels:
+                app: flannel
+            template:
+              metadata:
+                labels:
+                  tier: node
+                  app: flannel
+              spec:
+                affinity:
+                  nodeAffinity:
+                    requiredDuringSchedulingIgnoredDuringExecution:
+                      nodeSelectorTerms:
+                      - matchExpressions:
+                        - key: kubernetes.io/os
+                          operator: In
+                          values:
+                          - linux
+                hostNetwork: true
+                priorityClassName: system-node-critical
+                serviceAccountName: flannel
+                tolerations:
+                - operator: Exists
+                  effect: NoSchedule
+                containers:
+                - name: kube-flannel
+                  image: {{ registry_url }}/flannel:v0.23.0
+                  imagePullPolicy: IfNotPresent
+                  command:
+                  - /opt/bin/flanneld
+                  args:
+                  - --ip-masq
+                  - --kube-subnet-mgr
+                  resources:
+                    requests:
+                      cpu: "100m"
+                      memory: "50Mi"
+                    limits:
+                      memory: "50Mi"
+                  securityContext:
+                    privileged: false
+                    capabilities:
+                      add: ["NET_ADMIN", "NET_RAW"]
+                  env:
+                  - name: POD_NAME
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.name
+                  - name: POD_NAMESPACE
+                    valueFrom:
+                      fieldRef:
+                        fieldPath: metadata.namespace
+                  volumeMounts:
+                  - name: run
+                    mountPath: /run/flannel
+                  - name: flannel-cfg
+                    mountPath: /etc/kube-flannel/
+                  - name: cni-plugin
+                    mountPath: /opt/cni/bin/
+                  - name: cni
+                    mountPath: /etc/cni/net.d/
+                - name: install-cni
+                  image: {{ registry_url }}/flannel-cni-plugin:v1.4.0
+                  imagePullPolicy: IfNotPresent
+                  command: ["/install-cni.sh"]
+                  env:
+                  - name: CNI_CONF_NAME
+                    value: "10-flannel.conflist"
+                  - name: CNI_NETWORK_CONFIG
+                    valueFrom:
+                      configMapKeyRef:
+                        name: kube-flannel-cfg
+                        key: cni-conf.json
+                  volumeMounts:
+                  - name: cni-plugin
+                    mountPath: /host/opt/cni/bin
+                  - name: cni
+                    mountPath: /host/etc/cni/net.d
+                volumes:
+                - name: run
+                  hostPath:
+                    path: /run/flannel
+                - name: cni-plugin
+                  hostPath:
+                    path: /opt/cni/bin
+                - name: cni
+                  hostPath:
+                    path: /etc/cni/net.d
+                - name: flannel-cfg
+                  configMap:
+                    name: kube-flannel-cfg
+        dest: /tmp/flannel.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      when: inventory_hostname == "master-node-1"
+
+    - name: Применение манифеста Flannel
       command: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /tmp/calico.yaml
-      register: calico_apply
-      changed_when: calico_apply.rc == 0
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /tmp/flannel.yaml
+      register: flannel_apply
+      changed_when: flannel_apply.rc == 0
+      when: inventory_hostname == "master-node-1"
 
-    - name: Ожидание запуска подов Calico
+    - name: Ожидание запуска подов Flannel
       shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l k8s-app=calico-node --no-headers
-      register: calico_pods
-      until: calico_pods.stdout != ""
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l app=flannel --no-headers
+      register: flannel_pods
+      until: flannel_pods.stdout != ""
       retries: 30
       delay: 10
       when: inventory_hostname == "master-node-1"
 
-    - name: Проверка статуса Calico подов
+    - name: Проверка статуса Flannel подов
       shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l k8s-app=calico-node -o wide
-      register: calico_status
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-flannel -o wide
+      register: flannel_status
       when: inventory_hostname == "master-node-1"
 
-    - name: Отображение статуса Calico
+    - name: Отображение статуса Flannel
       debug:
-        var: calico_status.stdout
+        var: flannel_status.stdout
       when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 
@@ -707,8 +1016,8 @@
 
 - name: Сохранение команд join в переменные
   set_fact:
-    control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token sujx2i.y16zxicq1bbmfgs4 --discovery-token-ca-cert-hash sha256:069317430606299c62e5a0afa1013fc3136d5c6b11ef8bb223f8987da0418b2d --control-plane --certificate-key {{ certificate_key }}"
-    worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token sujx2i.y16zxicq1bbmfgs4 --discovery-token-ca-cert-hash sha256:069317430606299c62e5a0afa1013fc3136d5c6b11ef8bb223f8987da0418b2d"
+    control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout | regex_search('--token [^ ]+') | regex_replace('--token ') }} --discovery-token-ca-cert-hash {{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash [^ ]+') | regex_replace('--discovery-token-ca-cert-hash ') }} --control-plane --certificate-key {{ certificate_key }}"
+    worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout | regex_search('--token [^ ]+') | regex_replace('--token ') }} --discovery-token-ca-cert-hash {{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash [^ ]+') | regex_replace('--discovery-token-ca-cert-hash ') }}"
   when: inventory_hostname == "master-node-1"
 
 - name: Присоединение других мастер-узлов

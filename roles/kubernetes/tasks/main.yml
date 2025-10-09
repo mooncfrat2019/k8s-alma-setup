@@ -607,14 +607,52 @@
     mode: 0600
   when: inventory_hostname == "master-node-1"
 
-- name: Отметка узла как готового
-  command: |
-    kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+- name: Установка Calico CNI плагина
+  block:
+    - name: Скачивание манифеста Calico
+      get_url:
+        url: https://raw.githubusercontent.com/projectcalico/calico/v3.27.2/manifests/calico.yaml
+        dest: /tmp/calico.yaml
+        mode: '0644'
+
+    - name: Применение манифеста Calico
+      command: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /tmp/calico.yaml
+      register: calico_apply
+      changed_when: calico_apply.rc == 0
+
+    - name: Ожидание запуска подов Calico
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l k8s-app=calico-node --no-headers
+      register: calico_pods
+      until: calico_pods.stdout != ""
+      retries: 30
+      delay: 10
+      when: inventory_hostname == "master-node-1"
+
+    - name: Проверка статуса Calico подов
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l k8s-app=calico-node -o wide
+      register: calico_status
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение статуса Calico
+      debug:
+        var: calico_status.stdout
+      when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 
-- name: Отметка узла как готового
+- name: Попытка снятия taint с control-plane узлов
   command: |
-    kubectl --kubeconfig={{ k8s_home }}/.kube/config taint nodes --all node-role.kubernetes.io/control-plane- --overwrite
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf taint nodes --all node-role.kubernetes.io/control-plane- --overwrite
+  register: taint_result
+  failed_when: false
+  changed_when: false
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение результата taint
+  debug:
+    msg: "Taint result: {{ taint_result.stdout }}{{ taint_result.stderr }}"
   when: inventory_hostname == "master-node-1"
 
 - name: Получение команды join

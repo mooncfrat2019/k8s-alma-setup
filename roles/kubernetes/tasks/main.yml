@@ -611,8 +611,8 @@
 - name: Установка kube-proxy с правильной конфигурацией
   block:
     - name: Создание ServiceAccount для kube-proxy
-      command: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << EOF
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
         apiVersion: v1
         kind: ServiceAccount
         metadata:
@@ -622,8 +622,8 @@
       when: inventory_hostname == "master-node-1"
 
     - name: Создание ClusterRoleBinding для kube-proxy
-      command: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << EOF
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
         apiVersion: rbac.authorization.k8s.io/v1
         kind: ClusterRoleBinding
         metadata:
@@ -645,8 +645,8 @@
       when: inventory_hostname == "master-node-1"
 
     - name: Создание DaemonSet для kube-proxy с монтированием pki
-      command: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << EOF
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
         apiVersion: apps/v1
         kind: DaemonSet
         metadata:
@@ -717,8 +717,8 @@
       when: inventory_hostname == "master-node-1"
 
     - name: Создание ConfigMap для kube-proxy
-      command: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << EOF
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
         apiVersion: v1
         kind: ConfigMap
         metadata:

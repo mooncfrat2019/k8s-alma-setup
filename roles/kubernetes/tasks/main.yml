@@ -80,6 +80,7 @@
         owner: root
         group: root
         mode: '0755'
+        remote_src: no
       become: yes
 
     - name: Настройка конфига crictl
@@ -135,59 +136,125 @@
   register: kubeadm_config
   when: inventory_hostname == "master-node-1"
 
-- name: Перезапуск kubelet если конфигурация изменилась
-  systemd:
-    name: kubelet
-    state: restarted
-    daemon_reload: yes
-  when:
-    - inventory_hostname == "master-node-1"
-    - kubeadm_config.changed
-
-- name: Ожидание стабилизации kubelet
+- name: Предварительная настройка для etcd
   block:
-    - name: Ожидание активности kubelet в systemd
+    - name: Создание и настройка директории etcd
+      file:
+        path: /var/lib/etcd
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+      become: yes
+
+    - name: Проверка свободных портов etcd
+      shell: |
+        ss -tlnp | grep ":2379" && echo "Port 2379 is occupied" || echo "Port 2379 is free"
+        ss -tlnp | grep ":2380" && echo "Port 2380 is occupied" || echo "Port 2380 is free"
+      register: port_check
+      failed_when: false
+
+    - name: Отображение проверки портов
+      debug:
+        var: port_check.stdout
+
+    - name: Остановка kubelet перед инициализацией
       systemd:
         name: kubelet
-        state: started
-      register: kubelet_status
-      until: kubelet_status.status.ActiveState == "active"
-      retries: 10
-      delay: 5
+        state: stopped
+      become: yes
 
-    - name: Ожидание сокета kubelet (альтернативное расположение)
-      wait_for:
-        path: "/var/run/kubelet.sock"
-        state: present
-        timeout: 10
-      ignore_errors: yes
+    - name: Очистка предыдущей конфигурации etcd
+      shell: |
+        rm -rf /var/lib/etcd/member || true
+        rm -rf /etc/kubernetes/pki/etcd || true
+      become: yes
 
-    - name: Проверка процесса kubelet
-      shell: ps aux | grep kubelet | grep -v grep
-      register: kubelet_process
-      failed_when: kubelet_process.rc != 0
+    - name: Проверка сетевых интерфейсов
+      shell: |
+        ip addr show | grep "{{ master_ips[inventory_hostname] }}" || echo "IP address not found"
+        ping -c 3 {{ master_ips[inventory_hostname] }} || echo "Ping failed"
+      register: network_check
+      failed_when: false
 
-    - name: Проверка порта kubelet
-      wait_for:
-        port: 10250
-        host: "{{ ansible_host }}"
-        timeout: 30
-      ignore_errors: yes
-  when: inventory_hostname == "master-node-1"
-
-- name: Проверка статуса kubelet перед инициализацией
-  systemd:
-    name: kubelet
-    state: started
-  register: kubelet_status
-  failed_when: kubelet_status.status.ActiveState != "active"
+    - name: Отображение сетевой проверки
+      debug:
+        var: network_check.stdout
   when: inventory_hostname == "master-node-1"
 
 - name: Инициализация кластера на первом мастере
   command: |
-    kubeadm init --config /home/{{ k8s_user }}/kubeadm-config.yaml --upload-certs
+    kubeadm init \
+      --config /home/{{ k8s_user }}/kubeadm-config.yaml \
+      --upload-certs \
+      --v=3 \
+      --ignore-preflight-errors=all
   args:
     creates: /etc/kubernetes/admin.conf
+  register: kubeadm_init
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение результатов инициализации
+  debug:
+    var: kubeadm_init
+  when:
+    - inventory_hostname == "master-node-1"
+    - kubeadm_init is defined
+
+- name: Запуск kubelet после инициализации
+  systemd:
+    name: kubelet
+    state: started
+  when: inventory_hostname == "master-node-1"
+
+- name: Диагностика после инициализации
+  block:
+    - name: Ожидание создания манифеста etcd
+      wait_for:
+        path: /etc/kubernetes/manifests/etcd.yaml
+        state: present
+        timeout: 30
+
+    - name: Проверка манифеста etcd
+      command: cat /etc/kubernetes/manifests/etcd.yaml
+      register: etcd_manifest
+
+    - name: Отображение манифеста etcd
+      debug:
+        var: etcd_manifest.stdout
+
+    - name: Ожидание запуска etcd контейнера
+      shell: |
+        timeout 120 bash -c 'until crictl ps --name etcd --state running 2>/dev/null | grep -q etcd; do echo "Waiting for etcd..."; sleep 10; done'
+      register: etcd_wait
+      failed_when: etcd_wait.rc != 0
+
+    - name: Проверка статуса etcd
+      command: crictl ps --name etcd
+      register: etcd_status
+
+    - name: Отображение статуса etcd
+      debug:
+        var: etcd_status.stdout
+
+    - name: Получение логов etcd
+      shell: |
+        crictl logs $(crictl ps --name etcd -q) --tail=30
+      register: etcd_logs
+
+    - name: Отображение логов etcd
+      debug:
+        var: etcd_logs.stdout
+
+    - name: Проверка готовности etcd
+      shell: |
+        timeout 30 crictl logs $(crictl ps --name etcd -q) | grep "ready to serve client requests" || echo "etcd not ready yet"
+      register: etcd_ready_check
+      failed_when: false
+
+    - name: Отображение готовности etcd
+      debug:
+        var: etcd_ready_check.stdout
   when: inventory_hostname == "master-node-1"
 
 - name: Ожидание инициализации первого мастера

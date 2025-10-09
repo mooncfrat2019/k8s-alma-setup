@@ -655,6 +655,11 @@
     msg: "Taint result: {{ taint_result.stdout }}{{ taint_result.stderr }}"
   when: inventory_hostname == "master-node-1"
 
+- name: Принудительное создание cluster-info kubeadm
+  command: |
+    kubeadm init phase bootstrap-token --kubeconfig=/etc/kubernetes/admin.conf
+  when: inventory_hostname == "master-node-1"
+
 - name: Настройка RBAC для разрешения анонимного доступа к cluster-info
   command: |
     kubectl --kubeconfig=/etc/kubernetes/admin.conf create clusterrolebinding kubeadm-node-clusterinfo --clusterrole=cluster-info-reader --group=system:unauthenticated --group=system:authenticated

@@ -127,12 +127,6 @@
         state: stopped
       become: yes
 
-    - name: Остановка containerd
-      systemd:
-        name: containerd
-        state: stopped
-      become: yes
-
     - name: Удаление всех контейнеров
       shell: |
         crictl ps -aq | xargs -I {} crictl stop {} 2>/dev/null || true
@@ -153,7 +147,6 @@
         rm -rf /var/lib/cni
         rm -rf /etc/cni
         rm -rf $HOME/.kube
-        rm -rf /etc/systemd/system/kubelet.service.d
       become: yes
 
     #- name: Очистка сетевых интерфейсов
@@ -204,164 +197,115 @@
     mode: 0644
   when: inventory_hostname == "master-node-1"
 
-- name: Проверка содержимого новой конфигурации
-  command: cat "/home/{{ k8s_user }}/kubeadm-config.yaml"
-  register: kubeadm_config_content
-  when: inventory_hostname == "master-node-1"
-
-- name: Отображение конфигурации kubeadm
-  debug:
-    var: kubeadm_config_content.stdout
-  when: inventory_hostname == "master-node-1"
-
-- name: Инициализация кластера с новой конфигурацией
+- name: Инициализация кластера только до создания манифестов
   command: |
-    kubeadm init \
-      --config /home/{{ k8s_user }}/kubeadm-config.yaml \
-      --upload-certs \
-      --ignore-preflight-errors=all \
-      --v=5
-  args:
-    creates: /etc/kubernetes/admin.conf
-  register: kubeadm_init
+    kubeadm init phase certs all --config /home/{{ k8s_user }}/kubeadm-config.yaml
   when: inventory_hostname == "master-node-1"
 
-- name: Отображение результатов инициализации
-  debug:
-    var: kubeadm_init
+- name: Создание манифестов control-plane
+  command: |
+    kubeadm init phase control-plane all --config /home/{{ k8s_user }}/kubeadm-config.yaml
   when: inventory_hostname == "master-node-1"
 
-- name: Проверка применения новой конфигурации etcd
-  block:
-    - name: Ожидание создания манифеста etcd
-      wait_for:
-        path: /etc/kubernetes/manifests/etcd.yaml
-        state: present
-        timeout: 60
-
-    - name: Проверка содержимого манифеста etcd
-      command: cat /etc/kubernetes/manifests/etcd.yaml
-      register: etcd_manifest_content
-
-    - name: Отображение манифеста etcd
-      debug:
-        var: etcd_manifest_content.stdout
-
-    - name: Проверка listen-urls в манифесте
-      shell: |
-        echo "=== listen-client-urls ==="
-        grep "listen-client-urls" /etc/kubernetes/manifests/etcd.yaml
-        echo "=== listen-peer-urls ==="
-        grep "listen-peer-urls" /etc/kubernetes/manifests/etcd.yaml
-      register: etcd_urls_check
-
-    - name: Отображение проверки URLs
-      debug:
-        var: etcd_urls_check.stdout
+- name: Создание манифеста etcd
+  command: |
+    kubeadm init phase etcd local --config /home/{{ k8s_user }}/kubeadm-config.yaml
   when: inventory_hostname == "master-node-1"
 
-- name: Ожидание запуска etcd с новой конфигурацией
-  block:
-    - name: Ожидание запуска etcd контейнера
-      shell: |
-        timeout 180 bash -c '
-          until crictl ps --name etcd --state running 2>/dev/null | grep -q etcd; do 
-            echo "Waiting for etcd container to start..."; 
-            sleep 10; 
-          done
-          echo "etcd container is running"
-        '
-      register: etcd_container_wait
-      failed_when: etcd_container_wait.rc != 0
-
-    - name: Ожидание готовности etcd
-      shell: |
-        timeout 240 bash -c '
-          until crictl logs $(crictl ps --name etcd -q) 2>/dev/null | grep -q "ready to serve client requests"; do
-            echo "Waiting for etcd to be ready...";
-            sleep 10;
-          done
-          echo "etcd is ready to serve requests"
-        '
-      register: etcd_ready_wait
-      failed_when: etcd_ready_wait.rc != 0
-
-    - name: Проверка финального статуса etcd
-      shell: |
-        echo "=== etcd container status ==="
-        crictl ps --name etcd
-        echo "=== etcd logs (last 10 lines) ==="
-        crictl logs $(crictl ps --name etcd -q) --tail=10
-      register: etcd_final_status
-
-    - name: Отображение финального статуса
-      debug:
-        var: etcd_final_status.stdout
+- name: Принудительный запуск kubelet для загрузки static pods
+  systemd:
+    name: kubelet
+    state: restarted
+    daemon_reload: yes
   when: inventory_hostname == "master-node-1"
 
-- name: Ожидание инициализации первого мастера
-  wait_for:
-    path: /etc/kubernetes/admin.conf
-    state: present
+- name: Ожидание запуска etcd
+  shell: |
+    timeout 300 bash -c '
+      until crictl ps --name etcd --state running 2>/dev/null | grep -q etcd; do 
+        echo "Waiting for etcd..."; 
+        sleep 10; 
+      done
+      echo "etcd is running"
+    
+      until crictl logs $(crictl ps --name etcd -q) 2>/dev/null | grep -q "ready to serve client requests"; do
+        echo "Waiting for etcd to be ready...";
+        sleep 10;
+      done
+      echo "etcd is ready"
+    '
+  register: etcd_wait
   when: inventory_hostname == "master-node-1"
 
-- name: Настройка kubectl для первого мастера
-  block:
-    - name: Копирование конфигурации для пользователя
-      copy:
-        src: /etc/kubernetes/admin.conf
-        dest: "{{ k8s_home }}/.kube/config"
-        remote_src: yes
-        owner: "{{ k8s_user }}"
-        group: "{{ k8s_group }}"
-        mode: 0600
+- name: Ожидание запуска kube-apiserver
+  shell: |
+    timeout 300 bash -c '
+      until crictl ps --name kube-apiserver --state running 2>/dev/null | grep -q kube-apiserver; do 
+        echo "Waiting for kube-apiserver..."; 
+        sleep 10; 
+      done
+      echo "kube-apiserver is running"
+    '
+  register: api_wait
+  when: inventory_hostname == "master-node-1"
 
-    - name: Ожидание готовности Kubernetes API
-      wait_for:
-        host: "{{ cluster_vip }}"
-        port: 6443
-        delay: 10
-        timeout: 300
+- name: Завершение инициализации кластера
+  command: |
+    kubeadm init phase kubeconfig all --config /home/{{ k8s_user }}/kubeadm-config.yaml
+  when: inventory_hostname == "master-node-1"
 
-    - name: Проверка готовности control-plane
-      command: kubectl get nodes
-      register: node_status
-      until: node_status.rc == 0 and "master-node-1" in node_status.stdout and "Ready" in node_status.stdout
-      retries: 30
-      delay: 10
+- name: Создание admin.conf
+  command: |
+    kubeadm init phase kubeconfig admin --config /home/{{ k8s_user }}/kubeadm-config.yaml
+  when: inventory_hostname == "master-node-1"
 
-    - name: Получение команды join для control-plane
-      command: kubeadm token create --print-join-command
-      register: join_command
-      changed_when: false
-      retries: 5
-      delay: 30
+- name: Копирование конфигурации для пользователя
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ k8s_home }}/.kube/config"
+    remote_src: yes
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0600
+  when: inventory_hostname == "master-node-1"
 
-    - name: Получение certificate key
-      command: kubeadm init phase upload-certs --upload-certs
-      register: cert_key
-      changed_when: false
+- name: Ожидание готовности Kubernetes API
+  shell: |
+    timeout 300 bash -c '
+      until kubectl get nodes --kubeconfig=/etc/kubernetes/admin.conf 2>/dev/null; do
+        echo "Waiting for API server...";
+        sleep 10;
+      done
+      echo "API server is ready"
+    '
+  when: inventory_hostname == "master-node-1"
 
-    - name: Сохранение команд join
-      copy:
-        content: |
-          Control Plane Join Command:
-          kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} \
-            --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }} \
-            --control-plane --certificate-key {{ cert_key.stdout.split()[3] }}
+- name: Отметка узла как готового
+  command: |
+    kubectl taint nodes --all node-role.kubernetes.io/control-plane-
+  when: inventory_hostname == "master-node-1"
 
-          Worker Join Command:
-          kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} \
-            --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }}
-        dest: "{{ k8s_home }}/k8s-join-commands.txt"
-        owner: "{{ k8s_user }}"
-        group: "{{ k8s_group }}"
-        mode: 0600
+- name: Установка CNI плагина (Flannel)
+  command: |
+    kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+  when: inventory_hostname == "master-node-1"
 
-    - name: Сохранение команд join в переменные
-      set_fact:
-        control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }} --control-plane --certificate-key {{ cert_key.stdout.split()[3] }}"
-        worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }}"
+- name: Получение команды join для control-plane
+  command: kubeadm token create --print-join-command
+  register: join_command
+  changed_when: false
+  when: inventory_hostname == "master-node-1"
+
+- name: Получение certificate key
+  command: kubeadm init phase upload-certs --upload-certs
+  register: cert_key
+  changed_when: false
+  when: inventory_hostname == "master-node-1"
+
+- name: Сохранение команд join в переменные
+  set_fact:
+    control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }} --control-plane --certificate-key {{ cert_key.stdout.split()[3] }}"
+    worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout.split()[3] }} --discovery-token-ca-cert-hash {{ join_command.stdout.split()[5] }}"
   when: inventory_hostname == "master-node-1"
 
 - name: Присоединение других мастер-узлов

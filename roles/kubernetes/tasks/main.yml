@@ -949,7 +949,7 @@
                   - name: cni
                     mountPath: /etc/cni/net.d/
                 - name: install-cni
-                  image: {{ registry_url }}/flannel-cni-plugin:v1.4.0
+                  image: {{ registry_url }}/flannel-cni-plugin:v1.8.0
                   imagePullPolicy: IfNotPresent
                   command: ["/install-cni.sh"]
                   env:

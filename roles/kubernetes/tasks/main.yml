@@ -852,7 +852,7 @@
                   effect: NoSchedule
                 containers:
                 - name: kube-flannel
-                  image: {{ registry_url }}/flannel:v0.23.0
+                  image: {{ registry_url }}/flannel:v0.27.4
                   imagePullPolicy: IfNotPresent
                   command:
                   - /opt/bin/flanneld
@@ -932,7 +932,7 @@
 
     - name: Ожидание запуска подов Flannel
       shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l app=flannel --no-headers
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-flannel -l app=flannel --no-headers
       register: flannel_pods
       until: flannel_pods.stdout != ""
       retries: 30

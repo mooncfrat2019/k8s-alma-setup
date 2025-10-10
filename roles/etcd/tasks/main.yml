@@ -67,6 +67,7 @@
     - "/tmp/{{ etcd_archive }}"
     - "/tmp/etcd-v{{ etcd_version }}-linux-amd64"
 
+# Создаем папку на узле-генераторе
 - name: Create etcd cert directory on certificate generator node
   file:
     path: "{{ etcd_cert_dir }}"
@@ -78,6 +79,7 @@
   run_once: true
   when: etcd_generate_certs
 
+# Генерируем сертификаты
 - name: Generate etcd certificates
   template:
     src: etcd-certificates.sh.j2
@@ -93,6 +95,25 @@
   run_once: true
   when: etcd_generate_certs
 
+- name: Cleanup temporary script
+  file:
+    path: /tmp/generate-etcd-certs.sh
+    state: absent
+  delegate_to: "{{ groups['masters'][0] }}"
+  run_once: true
+  when: etcd_generate_certs
+
+# Создаем папки на всех узлах
+- name: Create etcd cert directories on all nodes
+  file:
+    path: "{{ etcd_cert_dir }}"
+    state: directory
+    owner: etcd
+    group: etcd
+    mode: '0750'
+  when: etcd_generate_certs
+
+# Распространяем сертификаты на все узлы
 - name: Distribute etcd certificates to all nodes
   synchronize:
     src: "{{ etcd_cert_dir }}/"
@@ -102,23 +123,7 @@
   run_once: true
   when: etcd_generate_certs
 
-- name: Cleanup temporary script
-  file:
-    path: /tmp/generate-etcd-certs.sh
-    state: absent
-  delegate_to: "{{ groups['masters'][0] }}"
-  run_once: true
-  when: etcd_generate_certs
-
-- name: Create Kubernetes PKI directory
-  file:
-    path: "{{ etcd_k8s_cert_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: '0750'
-  when: etcd_generate_certs
-
+# Копируем в Kubernetes PKI
 - name: Copy etcd CA to Kubernetes PKI directory
   copy:
     src: "{{ etcd_cert_dir }}/ca.pem"
@@ -144,10 +149,13 @@
   when: etcd_generate_certs
   become: yes
 
-- name: Set etcd node-specific variables
+- name: Set etcd node name
   set_fact:
     etcd_name: "etcd-{{ inventory_hostname }}"
-    etcd_initial_cluster: "{{ groups['masters'] | map('extract', hostvars, 'etcd_name') | zip(groups['masters'] | map('extract', hostvars, 'ansible_host')) | map('join', '={{ etcd_peer_protocol }}://') | map('regex_replace', '$', ':' + etcd_peer_port | string) | join(',') }}"
+
+- name: Set etcd cluster configuration
+  set_fact:
+    etcd_initial_cluster: "{% for host in groups['masters'] %}etcd-{{ host }}={{ etcd_peer_protocol }}://{{ hostvars[host]['ansible_host'] }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
     etcd_listen_peer_urls: "{{ etcd_peer_protocol }}://{{ hostvars[inventory_hostname]['node_ip'] }}:{{ etcd_peer_port }}"
     etcd_listen_client_urls: "{{ etcd_client_protocol }}://{{ hostvars[inventory_hostname]['node_ip'] }}:{{ etcd_client_port }},{{ etcd_client_protocol }}://127.0.0.1:{{ etcd_client_port }}"
     etcd_advertise_client_urls: "{{ etcd_client_protocol }}://{{ hostvars[inventory_hostname]['node_ip'] }}:{{ etcd_client_port }}"

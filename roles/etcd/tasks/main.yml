@@ -121,9 +121,7 @@
     owner: etcd
     group: etcd
     mode: '0600'
-    remote_src: yes
   delegate_to: "{{ groups['masters'][0] }}"
-  run_once: true
   loop:
     - ca.pem
     - ca-key.pem
@@ -139,7 +137,9 @@
     - peer-key.pem
     - client.pem
     - client-key.pem
-  when: etcd_generate_certs
+  when:
+   - etcd_generate_certs
+   - inventory_hostname != groups['masters'][0]
 
 # Копируем в Kubernetes PKI
 - name: Copy etcd CA to Kubernetes PKI directory

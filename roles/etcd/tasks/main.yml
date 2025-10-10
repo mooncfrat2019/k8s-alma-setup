@@ -114,14 +114,38 @@
   when: etcd_generate_certs
 
 # Распространяем сертификаты на все узлы
-- name: Distribute etcd certificates to all nodes
-  copy:
+- name: Fetch etcd certificates from master-node-1 to controller
+  fetch:
     src: "{{ etcd_cert_dir }}/{{ item }}"
+    dest: "/tmp/etcd_certs/{{ item }}"
+    flat: yes
+  loop:
+    - ca.pem
+    - ca-key.pem
+    - master-node-1.pem
+    - master-node-1-key.pem
+    - master-node-2.pem
+    - master-node-2-key.pem
+    - master-node-3.pem
+    - master-node-3-key.pem
+    - kubernetes.pem
+    - kubernetes-key.pem
+    - peer.pem
+    - peer-key.pem
+    - client.pem
+    - client-key.pem
+  delegate_to: "{{ groups['masters'][0] }}"
+  when: etcd_generate_certs
+  run_once: true
+
+# Шаг 2: Распространяем эти сертификаты со своего контроллера на все узлы
+- name: Distribute etcd certificates from controller to all nodes
+  copy:
+    src: "/tmp/etcd_certs/{{ item }}"
     dest: "{{ etcd_cert_dir }}/{{ item }}"
     owner: etcd
     group: etcd
     mode: '0600'
-  delegate_to: "{{ groups['masters'][0] }}"
   loop:
     - ca.pem
     - ca-key.pem
@@ -138,8 +162,8 @@
     - client.pem
     - client-key.pem
   when:
-   - etcd_generate_certs
-   - inventory_hostname != groups['masters'][0]
+    - etcd_generate_certs
+    - inventory_hostname != groups['masters'][0]
 
 # Копируем в Kubernetes PKI
 - name: Copy etcd CA to Kubernetes PKI directory

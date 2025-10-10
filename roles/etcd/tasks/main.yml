@@ -126,7 +126,9 @@
     owner: root
     group: root
     mode: '0644'
+    remote_src: yes
   when: etcd_generate_certs
+  become: yes
 
 - name: Copy Kubernetes etcd client certificates
   copy:
@@ -135,10 +137,12 @@
     owner: root
     group: root
     mode: '0644'
+    remote_src: yes
   loop:
     - { src: 'kubernetes.pem', dest: 'apiserver-etcd-client.crt' }
     - { src: 'kubernetes-key.pem', dest: 'apiserver-etcd-client.key' }
   when: etcd_generate_certs
+  become: yes
 
 - name: Set etcd node-specific variables
   set_fact:

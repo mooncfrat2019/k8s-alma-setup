@@ -194,6 +194,96 @@
     kubeadm init phase certs all --config /home/{{ k8s_user }}/kubeadm-config.yaml
   when: inventory_hostname == "master-node-1"
 
+- name: Копирование сертификатов Kubernetes на все мастер-ноды
+  block:
+    - name: Создание директории pki на других мастерах
+      file:
+        path: /etc/kubernetes/pki
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование основных сертификатов CA
+      synchronize:
+        src: /etc/kubernetes/pki/ca.crt
+        dest: /etc/kubernetes/pki/ca.crt
+        mode: push
+      delegate_to: master-node-1
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование CA ключа
+      synchronize:
+        src: /etc/kubernetes/pki/ca.key
+        dest: /etc/kubernetes/pki/ca.key
+        mode: push
+      delegate_to: master-node-1
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование front-proxy сертификатов
+      synchronize:
+        src: /etc/kubernetes/pki/front-proxy-ca.crt
+        dest: /etc/kubernetes/pki/front-proxy-ca.crt
+        mode: push
+      delegate_to: master-node-1
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование front-proxy ключа
+      synchronize:
+        src: /etc/kubernetes/pki/front-proxy-ca.key
+        dest: /etc/kubernetes/pki/front-proxy-ca.key
+        mode: push
+      delegate_to: master-node-1
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование sa ключей
+      synchronize:
+        src: /etc/kubernetes/pki/sa.key
+        dest: /etc/kubernetes/pki/sa.key
+        mode: push
+      delegate_to: master-node-1
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование sa pub ключа
+      synchronize:
+        src: /etc/kubernetes/pki/sa.pub
+        dest: /etc/kubernetes/pki/sa.pub
+        mode: push
+      delegate_to: master-node-1
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование всей директории etcd
+      synchronize:
+        src: /etc/kubernetes/pki/etcd/
+        dest: /etc/kubernetes/pki/etcd/
+        recursive: yes
+        mode: push
+      delegate_to: master-node-1
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Проверка скопированных сертификатов
+      shell: |
+        ls -la /etc/kubernetes/pki/
+        ls -la /etc/kubernetes/pki/etcd/ || echo "ETCD_NOT_COPIED"
+      register: certs_check
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Отображение проверки сертификатов
+      debug:
+        var: certs_check.stdout
+      when: inventory_hostname != "master-node-1"
+  when: inventory_hostname in groups['masters']
+
 - name: Создание kubeconfig файлов
   command: |
     kubeadm init phase kubeconfig all --config /home/{{ k8s_user }}/kubeadm-config.yaml
@@ -585,7 +675,7 @@
       [Service]
       ExecStart=/usr/bin/kubelet \
         --config=/var/lib/kubelet/config.yaml \
-        --kubeconfig=/etc/kubernetes/kubelet.conf \
+        --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock \
         --pod-infra-container-image={{ registry_url }}/pause:3.9 \
         --fail-swap-on=false \
         --v=2

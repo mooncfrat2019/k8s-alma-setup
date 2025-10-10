@@ -219,13 +219,18 @@
       become: yes
       when: inventory_hostname != "master-node-1"
 
-    - name: Распаковка сертификатов
-      unarchive:
-        src: /tmp/k8s-certs.tar.gz
-        dest: /etc/kubernetes/pki
-        remote_src: yes
-        owner: root
-        group: root
+    - name: Распаковка сертификатов через shell команду
+      shell: |
+        tar -xzf /tmp/k8s-certs.tar.gz -C /etc/kubernetes/pki/
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Установка прав на сертификаты
+      shell: |
+        find /etc/kubernetes/pki -name "*.key" -exec chmod 600 {} \;
+        find /etc/kubernetes/pki -name "*.crt" -exec chmod 644 {} \;
+        find /etc/kubernetes/pki -name "*.pub" -exec chmod 644 {} \;
+        chown -R root:root /etc/kubernetes/pki/
       become: yes
       when: inventory_hostname != "master-node-1"
 

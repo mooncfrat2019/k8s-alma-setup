@@ -1099,6 +1099,26 @@
     msg: "Taint result: {{ taint_result.stdout }}{{ taint_result.stderr }}"
   when: inventory_hostname == "master-node-1"
 
+- name: Создание чистого kubeadm-config через шаблон
+  template:
+    src: kubeadm-config-mini.yaml.j2
+    dest: "/home/{{ k8s_user }}/kubeadm-config-clean.yaml"
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0644
+  when: inventory_hostname == "master-node-1"
+
+- name: Проверка созданного чистого конфига
+  shell: |
+    cat /home/{{ k8s_user }}/kubeadm-config-clean.yaml
+  register: clean_config_check
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение чистого конфига
+  debug:
+    var: clean_config_check.stdout
+  when: inventory_hostname == "master-node-1"
+
 - name: Принудительное создание cluster-info kubeadm
   command: |
     kubeadm init phase bootstrap-token --kubeconfig=/etc/kubernetes/admin.conf
@@ -1324,33 +1344,40 @@
     mode: 0644
   when: inventory_hostname != "master-node-1"
 
-- name: Создание kubeadm-config ConfigMap
+- name: Создание правильного kubeadm-config ConfigMap из шаблона
   block:
-    - name: Получение текущего kubeadm-config
-      shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubeadm-config -n kube-system -o yaml
-      register: current_kubeadm_config
-      when: inventory_hostname == "master-node-1"
-
-    - name: Удаление неправильного kubeadm-config
+    - name: Удаление существующего kubeadm-config ConfigMap
       shell: |
         kubectl --kubeconfig=/etc/kubernetes/admin.conf delete cm kubeadm-config -n kube-system --ignore-not-found=true
       when: inventory_hostname == "master-node-1"
 
-    - name: Создание правильного kubeadm-config с использованием
+    - name: Создание kubeadm-config ConfigMap из чистого шаблона
       shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf create cm kubeadm-config -n kube-system --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config.yaml
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf create configmap kubeadm-config \
+          --namespace kube-system \
+          --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config-clean.yaml
       when: inventory_hostname == "master-node-1"
 
-    - name: Проверка версии API в конфиге
+    - name: Проверка созданного kubeadm-config
       shell: |
-        grep "apiVersion:" /home/{{ k8s_user }}/kubeadm-config.yaml
-      register: api_version_check
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubeadm-config -n kube-system -o jsonpath='{.data.ClusterConfiguration}' | grep -E "(apiVersion|kind:)"
+      register: kubeadm_config_verify
       when: inventory_hostname == "master-node-1"
 
-    - name: Отображение версии API
+    - name: Отображение структуры kubeadm-config
       debug:
-        var: api_version_check.stdout
+        var: kubeadm_config_verify.stdout
+      when: inventory_hostname == "master-node-1"
+
+    - name: Полная проверка kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubeadm-config -n kube-system -o yaml
+      register: kubeadm_config_full
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение полного содержимого kubeadm-config
+      debug:
+        var: kubeadm_config_full.stdout
       when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 

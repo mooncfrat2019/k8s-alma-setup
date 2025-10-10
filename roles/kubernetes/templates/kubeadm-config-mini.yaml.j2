@@ -1,0 +1,45 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+kubernetesVersion: "v{{ kubernetes_version }}"
+controlPlaneEndpoint: "{{ cluster_vip }}:6443"
+apiServer:
+  certSANs:
+    - "{{ cluster_vip }}"
+    - "{{ cluster_domain }}"
+    - "127.0.0.1"
+    - "localhost"
+{% for ip in master_ips.values() %}
+    - "{{ ip }}"
+{% endfor %}
+{% for host in groups['masters'] %}
+    - "{{ host }}"
+{% endfor %}
+  extraArgs:
+    authorization-mode: Node,RBAC
+networking:
+  podSubnet: "{{ pod_network_cidr }}"
+  serviceSubnet: "{{ service_cidr }}"
+  dnsDomain: "cluster.local"
+etcd:
+  local:
+    dataDir: "/var/lib/etcd"
+    extraArgs:
+      listen-client-urls: "https://0.0.0.0:2379"
+      advertise-client-urls: "https://{{ master_ips[inventory_hostname] }}:2379"
+      listen-peer-urls: "https://0.0.0.0:2380"
+      initial-advertise-peer-urls: "https://{{ master_ips[inventory_hostname] }}:2380"
+      initial-cluster: "{{ inventory_hostname }}=https://{{ master_ips[inventory_hostname] }}:2380"
+      listen-metrics-urls: "http://0.0.0.0:2381"
+    serverCertSANs:
+      - "{{ inventory_hostname }}"
+      - "{{ master_ips[inventory_hostname] }}"
+      - "127.0.0.1"
+      - "localhost"
+      - "0.0.0.0"
+    peerCertSANs:
+      - "{{ inventory_hostname }}"
+      - "{{ master_ips[inventory_hostname] }}"
+      - "127.0.0.1"
+      - "localhost"
+      - "0.0.0.0"
+imageRepository: "{{ registry_url }}"

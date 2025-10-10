@@ -1,5 +1,4 @@
 ---
----
 - name: Установка и настройка containerd
   block:
     - name: Копирование rpm пакета containerd на сервер

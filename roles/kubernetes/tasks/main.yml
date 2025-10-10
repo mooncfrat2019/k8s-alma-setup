@@ -786,6 +786,55 @@
 
 - name: Установка Flannel CNI плагина
   block:
+    - name: Очистка предыдущей установки Flannel (игнорируя ошибки)
+      block:
+        - name: Удаление ресурсов Flannel
+          command: |
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf delete -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml --ignore-not-found=true
+          register: flannel_cleanup
+          failed_when: false
+          changed_when: flannel_cleanup.rc == 0
+
+        - name: Удаление namespace kube-flannel
+          command: |
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf delete namespace kube-flannel --ignore-not-found=true
+          register: namespace_cleanup
+          failed_when: false
+          changed_when: namespace_cleanup.rc == 0
+
+        - name: Ожидание завершения удаления ресурсов
+          shell: |
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf get all -n kube-flannel 2>&1 | grep -q "NotFound" && echo "DELETED" || echo "EXISTS"
+          register: cleanup_check
+          until: cleanup_check.stdout == "DELETED"
+          retries: 10
+          delay: 5
+
+        - name: Очистка CNI конфигураций
+          file:
+            path: /etc/cni/net.d
+            state: absent
+          failed_when: false
+
+        - name: Пересоздание директории CNI
+          file:
+            path: /etc/cni/net.d
+            state: directory
+            mode: '0755'
+
+        - name: Очистка CNI бинарников
+          file:
+            path: /opt/cni/bin/flannel
+            state: absent
+          failed_when: false
+
+      when: inventory_hostname == "master-node-1"
+
+    - name: Пауза после очистки
+      pause:
+        seconds: 10
+      when: inventory_hostname == "master-node-1"
+
     - name: Создание манифеста Flannel
       copy:
         content: |
@@ -1008,6 +1057,7 @@
         group: root
         mode: '0644'
       when: inventory_hostname == "master-node-1"
+
     - name: Применение манифеста Flannel
       command: |
         kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /tmp/flannel.yaml

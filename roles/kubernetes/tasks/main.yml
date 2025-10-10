@@ -1104,11 +1104,153 @@
     kubeadm init phase bootstrap-token --kubeconfig=/etc/kubernetes/admin.conf
   when: inventory_hostname == "master-node-1"
 
+- name: Создание недостающих RBAC правил для bootstrap токенов
+  block:
+    - name: Создание ClusterRole для чтения cluster-info
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: cluster-info-reader
+        rules:
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          resourceNames: ["cluster-info"]
+          verbs: ["get"]
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для system:unauthenticated
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: system:unauthenticated-cluster-info
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-info-reader
+        subjects:
+        - kind: Group
+          name: system:unauthenticated
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для system:authenticated
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: system:authenticated-cluster-info
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-info-reader
+        subjects:
+        - kind: Group
+          name: system:authenticated
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для bootstrap tokens
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kubeadm:bootstrap-signer-clusterinfo
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-info-reader
+        subjects:
+        - kind: Group
+          name: system:bootstrappers:kubeadm:default-node-token
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRole для чтения kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: kubeadm-config-reader
+        rules:
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          resourceNames: ["kubeadm-config"]
+          verbs: ["get"]
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для чтения kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kubeadm-config-reader
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: kubeadm-config-reader
+        subjects:
+        - kind: Group
+          name: system:bootstrappers:kubeadm:default-node-token
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Проверка создания RBAC правил
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get clusterrole,clusterrolebinding | grep -E "(cluster-info-reader|kubeadm-config-reader)"
+      register: rbac_check
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение статуса RBAC
+      debug:
+        var: rbac_check.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
 - name: Настройка RBAC для разрешения анонимного доступа к cluster-info
-  command: |
-    kubectl --kubeconfig=/etc/kubernetes/admin.conf create clusterrolebinding kubeadm-node-clusterinfo --clusterrole=cluster-info-reader --group=system:unauthenticated --group=system:authenticated
-  failed_when: false
-  changed_when: false
+  block:
+    - name: Создание ClusterRole для чтения cluster-info
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: cluster-info-reader
+        rules:
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          resourceNames: ["cluster-info"]
+          verbs: ["get"]
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для анонимного доступа
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kubeadm-node-clusterinfo
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-info-reader
+        subjects:
+        - kind: Group
+          name: system:unauthenticated
+        - kind: Group
+          name: system:authenticated
+        EOF
+      when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 
 - name: Проверка доступа к cluster-info

@@ -115,12 +115,30 @@
 
 # Распространяем сертификаты на все узлы
 - name: Distribute etcd certificates to all nodes
-  synchronize:
-    src: "{{ etcd_cert_dir }}/"
-    dest: "{{ etcd_cert_dir }}/"
-    mode: pull
+  copy:
+    src: "{{ etcd_cert_dir }}/{{ item }}"
+    dest: "{{ etcd_cert_dir }}/{{ item }}"
+    owner: etcd
+    group: etcd
+    mode: '0600'
+    remote_src: yes
   delegate_to: "{{ groups['masters'][0] }}"
   run_once: true
+  loop:
+    - ca.pem
+    - ca-key.pem
+    - master-node-1.pem
+    - master-node-1-key.pem
+    - master-node-2.pem
+    - master-node-2-key.pem
+    - master-node-3.pem
+    - master-node-3-key.pem
+    - kubernetes.pem
+    - kubernetes-key.pem
+    - peer.pem
+    - peer-key.pem
+    - client.pem
+    - client-key.pem
   when: etcd_generate_certs
 
 # Копируем в Kubernetes PKI

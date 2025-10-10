@@ -1,4 +1,5 @@
 ---
+---
 - name: Установка и настройка containerd
   block:
     - name: Копирование rpm пакета containerd на сервер
@@ -128,6 +129,39 @@
       become: yes
       ignore_errors: yes
 
+    - name: Остановка статических подов Kubernetes
+      shell: |
+        # Удаляем все статические поды из manifests директории
+        rm -f /etc/kubernetes/manifests/*.yaml
+        # Даем время на остановку подов
+        sleep 10
+      become: yes
+      ignore_errors: yes
+
+    - name: Удаление старых директорий Kubernetes
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes
+        - /var/lib/etcd
+        - /var/lib/kubelet
+        - /var/lib/kube-proxy
+        - /var/run/kubernetes
+      become: yes
+      ignore_errors: yes
+
+    - name: Очистка данных containerd
+      shell: |
+        # Останавливаем все контейнеры
+        crictl rm -fa || true
+        # Удаляем все образы
+        crictl rmi -a || true
+        # Очищаем данные containerd
+        containerd config dump | grep root | cut -d'"' -f2 | xargs -I {} rm -rf {}/io.containerd.content.v1.content/*
+      become: yes
+      ignore_errors: yes
+
     - name: Создание необходимых директорий
       file:
         path: "{{ item }}"
@@ -141,8 +175,11 @@
         - /var/lib/kubelet
         - /etc/kubernetes/manifests
         - /etc/kubernetes/pki
+        - /var/lib/kube-proxy
+        - /etc/cni
+        - /var/lib/cni
       become: yes
-  when: inventory_hostname == "master-node-1"
+  when: inventory_hostname in groups['masters']
 
 - name: Создание конфигурации kubeadm для первого мастера
   template:
@@ -163,9 +200,16 @@
     kubeadm init phase kubeconfig all --config /home/{{ k8s_user }}/kubeadm-config.yaml
   when: inventory_hostname == "master-node-1"
 
-- name: Создание ВСЕХ манифестов static pods перед запуском kubelet
+- name: Создание etcd манифеста для всех мастер-узлов
   block:
-    - name: Создание манифеста etcd
+    - name: Создание списка etcd кластера
+      set_fact:
+        etcd_initial_cluster: "{% for host in groups['masters'] %}{{ host }}=https://{{ hostvars[host].node_ip }}:2380{% if not loop.last %},{% endif %}{% endfor %}"
+    - name: Отображение созданного etcd кластера
+      debug:
+        var: etcd_initial_cluster
+
+    - name: Создание манифеста etcd для текущего мастера
       copy:
         content: |
           apiVersion: v1
@@ -183,17 +227,18 @@
             containers:
             - command:
               - etcd
-              - --advertise-client-urls=https://{{ master_ips[inventory_hostname] }}:2379
+              - --advertise-client-urls=https://{{ node_ip }}:2379
               - --cert-file=/etc/kubernetes/pki/etcd/server.crt
               - --client-cert-auth=true
               - --data-dir=/var/lib/etcd
-              - --initial-advertise-peer-urls=https://{{ master_ips[inventory_hostname] }}:2380
-              - --initial-cluster=master-node-1=https://{{ master_ips[inventory_hostname] }}:2380
+              - --initial-advertise-peer-urls=https://{{ node_ip }}:2380
+              - --initial-cluster={{ etcd_initial_cluster }}
+              - --initial-cluster-state=new
               - --key-file=/etc/kubernetes/pki/etcd/server.key
               - --listen-client-urls=https://0.0.0.0:2379
               - --listen-metrics-urls=http://0.0.0.0:2381
               - --listen-peer-urls=https://0.0.0.0:2380
-              - --name=master-node-1
+              - --name={{ inventory_hostname }}
               - --peer-cert-file=/etc/kubernetes/pki/etcd/peer.crt
               - --peer-client-cert-auth=true
               - --peer-key-file=/etc/kubernetes/pki/etcd/peer.key
@@ -245,7 +290,10 @@
         group: root
         mode: '0644'
       become: yes
+  when: inventory_hostname in groups['masters']
 
+- name: Создание статических манифестов для первого мастера
+  block:
     - name: Создание манифеста kube-apiserver
       copy:
         content: |

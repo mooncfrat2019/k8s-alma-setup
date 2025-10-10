@@ -49,7 +49,7 @@
   become: yes
   roles:
     - role: etcd
-    - tags: etcd
+      tags: etcd
     - role: containerd
       tags: containerd
     - role: kubernetes

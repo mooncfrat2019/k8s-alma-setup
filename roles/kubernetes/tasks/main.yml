@@ -194,57 +194,181 @@
     kubeadm init phase certs all --config /home/{{ k8s_user }}/kubeadm-config.yaml
   when: inventory_hostname == "master-node-1"
 
-- name: Копирование всех сертификатов одним архивом на другие мастера
+- name: Копирование сертификатов на другие мастера
   block:
-    - name: Создание tar архива с сертификатами на master-node-1
-      shell: |
-        tar -czf /tmp/k8s-certs.tar.gz -C /etc/kubernetes/pki .
-      delegate_to: master-node-1
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Получение архива с сертификатами
-      slurp:
-        src: /tmp/k8s-certs.tar.gz
-      register: certs_archive
-      delegate_to: master-node-1
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Копирование архива на текущую ноду
-      copy:
-        content: "{{ certs_archive.content }}"
-        dest: /tmp/k8s-certs.tar.gz
-        mode: '0644'
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Распаковка сертификатов через shell команду
-      shell: |
-        tar -xzf /tmp/k8s-certs.tar.gz -C /etc/kubernetes/pki/
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Установка прав на сертификаты
-      shell: |
-        find /etc/kubernetes/pki -name "*.key" -exec chmod 600 {} \;
-        find /etc/kubernetes/pki -name "*.crt" -exec chmod 644 {} \;
-        find /etc/kubernetes/pki -name "*.pub" -exec chmod 644 {} \;
-        chown -R root:root /etc/kubernetes/pki/
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Очистка временных файлов
+    - name: Создание директории pki на других мастерах
       file:
-        path: /tmp/k8s-certs.tar.gz
-        state: absent
+        path: /etc/kubernetes/pki
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
       become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование CA сертификата
+      block:
+        - name: Получение CA сертификата
+          slurp:
+            src: /etc/kubernetes/pki/ca.crt
+          register: ca_crt
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование CA сертификата
+          copy:
+            content: "{{ ca_crt.content | b64decode }}"
+            dest: /etc/kubernetes/pki/ca.crt
+            owner: root
+            group: root
+            mode: '0644'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование CA ключа
+      block:
+        - name: Получение CA ключа
+          slurp:
+            src: /etc/kubernetes/pki/ca.key
+          register: ca_key
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование CA ключа
+          copy:
+            content: "{{ ca_key.content | b64decode }}"
+            dest: /etc/kubernetes/pki/ca.key
+            owner: root
+            group: root
+            mode: '0600'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование front-proxy CA
+      block:
+        - name: Получение front-proxy CA
+          slurp:
+            src: /etc/kubernetes/pki/front-proxy-ca.crt
+          register: front_proxy_ca_crt
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование front-proxy CA
+          copy:
+            content: "{{ front_proxy_ca_crt.content | b64decode }}"
+            dest: /etc/kubernetes/pki/front-proxy-ca.crt
+            owner: root
+            group: root
+            mode: '0644'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование front-proxy ключа
+      block:
+        - name: Получение front-proxy ключа
+          slurp:
+            src: /etc/kubernetes/pki/front-proxy-ca.key
+          register: front_proxy_ca_key
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование front-proxy ключа
+          copy:
+            content: "{{ front_proxy_ca_key.content | b64decode }}"
+            dest: /etc/kubernetes/pki/front-proxy-ca.key
+            owner: root
+            group: root
+            mode: '0600'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование SA ключей
+      block:
+        - name: Получение SA ключа
+          slurp:
+            src: /etc/kubernetes/pki/sa.key
+          register: sa_key
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование SA ключа
+          copy:
+            content: "{{ sa_key.content | b64decode }}"
+            dest: /etc/kubernetes/pki/sa.key
+            owner: root
+            group: root
+            mode: '0600'
+          become: yes
+
+        - name: Получение SA pub ключа
+          slurp:
+            src: /etc/kubernetes/pki/sa.pub
+          register: sa_pub
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование SA pub ключа
+          copy:
+            content: "{{ sa_pub.content | b64decode }}"
+            dest: /etc/kubernetes/pki/sa.pub
+            owner: root
+            group: root
+            mode: '0644'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Создание etcd директории
+      file:
+        path: /etc/kubernetes/pki/etcd
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование etcd CA
+      block:
+        - name: Получение etcd CA
+          slurp:
+            src: /etc/kubernetes/pki/etcd/ca.crt
+          register: etcd_ca_crt
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование etcd CA
+          copy:
+            content: "{{ etcd_ca_crt.content | b64decode }}"
+            dest: /etc/kubernetes/pki/etcd/ca.crt
+            owner: root
+            group: root
+            mode: '0644'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование etcd CA ключа
+      block:
+        - name: Получение etcd CA ключа
+          slurp:
+            src: /etc/kubernetes/pki/etcd/ca.key
+          register: etcd_ca_key
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование etcd CA ключа
+          copy:
+            content: "{{ etcd_ca_key.content | b64decode }}"
+            dest: /etc/kubernetes/pki/etcd/ca.key
+            owner: root
+            group: root
+            mode: '0600'
+          become: yes
       when: inventory_hostname != "master-node-1"
 
     - name: Проверка скопированных сертификатов
       shell: |
         echo "=== Основные сертификаты ==="
-        ls -la /etc/kubernetes/pki/ | grep -E "(ca|sa|front-proxy)"
+        ls -la /etc/kubernetes/pki/
         echo "=== Etcd сертификаты ==="
         ls -la /etc/kubernetes/pki/etcd/
       register: certs_check

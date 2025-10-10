@@ -804,7 +804,7 @@
 
         - name: Ожидание завершения удаления ресурсов
           shell: |
-            kubectl --kubeconfig=/etc/kubernetes/admin.conf get all -n kube-flannel 2>&1 | grep -q "NotFound" && echo "DELETED" || echo "EXISTS"
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf get all -n kube-flannel 2>&1 | grep -q "No resources found" && echo "DELETED" || echo "EXISTS"
           register: cleanup_check
           until: cleanup_check.stdout == "DELETED"
           retries: 10

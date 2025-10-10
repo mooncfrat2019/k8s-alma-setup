@@ -1291,11 +1291,38 @@
     var: certificate_key
   when: inventory_hostname == "master-node-1"
 
+- name: Извлечение token из join команды
+  set_fact:
+    join_token: "{{ join_command.stdout | regex_search('--token [^ ]+') | regex_replace('--token ') }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Извлечение discovery-token-ca-cert-hash из join команды
+  set_fact:
+    join_ca_cert_hash: "{{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash [^ ]+') | regex_replace('--discovery-token-ca-cert-hash ') }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение извлеченных значений для шаблона
+  debug:
+    msg: |
+      Token для шаблона: {{ join_token }}
+      CA Cert Hash для шаблона: {{ join_ca_cert_hash }}
+      Certificate Key для шаблона: {{ certificate_key }}
+  when: inventory_hostname == "master-node-1"
+
 - name: Сохранение команд join в переменные
   set_fact:
     control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout | regex_search('--token [^ ]+') | regex_replace('--token ') }} --discovery-token-ca-cert-hash {{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash [^ ]+') | regex_replace('--discovery-token-ca-cert-hash ') }} --control-plane --certificate-key {{ certificate_key }}"
     worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout | regex_search('--token [^ ]+') | regex_replace('--token ') }} --discovery-token-ca-cert-hash {{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash [^ ]+') | regex_replace('--discovery-token-ca-cert-hash ') }}"
   when: inventory_hostname == "master-node-1"
+
+- name: Создание конфигураций для присоединения мастер-узлов
+  template:
+    src: kubeadm-join-master.yaml.j2
+    dest: "/home/{{ k8s_user }}/kubeadm-join-{{ inventory_hostname }}.yaml"
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0644
+  when: inventory_hostname != "master-node-1"
 
 - name: Создание kubeadm-config ConfigMap
   block:
@@ -1371,11 +1398,10 @@
       when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 
-- name: Присоединение других мастер-узлов
-  command: "{{ hostvars['master-node-1']['control_plane_join_command'] }}"
-  when:
-    - inventory_hostname != "master-node-1"
-    - inventory_hostname in groups['masters']
+- name: Присоединение других мастер-узлов через конфиг файл
+  command: |
+    kubeadm join --config /home/{{ k8s_user }}/kubeadm-join-{{ inventory_hostname }}.yaml
+  when: inventory_hostname != "master-node-1"
 
 - name: Настройка kubectl на других мастерах
   block:

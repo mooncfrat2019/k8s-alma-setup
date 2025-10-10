@@ -1,0 +1,17 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: JoinConfiguration
+discovery:
+  bootstrapToken:
+    apiServerEndpoint: "{{ cluster_vip }}:6443"
+    token: "{{ hostvars['master-node-1']['join_token'] }}"
+    caCertHashes:
+    - "{{ hostvars['master-node-1']['join_ca_cert_hash'] }}"
+nodeRegistration:
+  name: "{{ inventory_hostname }}"
+  criSocket: "unix:///var/run/containerd/containerd.sock"
+  kubeletExtraArgs:
+    cloud-provider: "external"
+controlPlane:
+  localAPIEndpoint:
+    advertiseAddress: "{{ master_ips[inventory_hostname] }}"
+  certificateKey: "{{ hostvars['master-node-1']['certificate_key'] }}"

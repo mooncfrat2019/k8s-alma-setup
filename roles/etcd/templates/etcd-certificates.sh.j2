@@ -1,0 +1,134 @@
+#!/bin/bash
+
+set -e
+
+CERT_DIR="{{ etcd_cert_dir }}"
+DAYS="{{ etcd_cert_days }}"
+CA_DAYS="{{ etcd_ca_days }}"
+
+# Create certificate directory
+mkdir -p $CERT_DIR
+
+# Generate CA certificate
+openssl genrsa -out $CERT_DIR/ca-key.pem 4096
+openssl req -x509 -new -nodes -key $CERT_DIR/ca-key.pem -days $CA_DAYS -out $CERT_DIR/ca.pem -subj "/CN=etcd-ca"
+
+# Generate etcd member certificates for each node
+{% for host in groups['masters'] %}
+echo "Generating certificate for {{ host }}"
+
+# Generate private key
+openssl genrsa -out $CERT_DIR/{{ host }}-key.pem 4096
+
+# Generate CSR config
+cat > $CERT_DIR/{{ host }}-csr.conf << EOF
+[req]
+req_extensions = v3_req
+distinguished_name = req_distinguished_name
+[req_distinguished_name]
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+subjectAltName = @alt_names
+[alt_names]
+DNS.1 = {{ host }}
+DNS.2 = localhost
+DNS.3 = etcd-{{ host }}
+IP.1 = {{ hostvars[host]['node_ip'] }}
+IP.2 = 127.0.0.1
+IP.3 = ::1
+EOF
+
+# Generate certificate signing request
+openssl req -new -key $CERT_DIR/{{ host }}-key.pem -out $CERT_DIR/{{ host }}.csr -subj "/CN=etcd-{{ host }}" -config $CERT_DIR/{{ host }}-csr.conf
+
+# Sign the certificate
+openssl x509 -req -in $CERT_DIR/{{ host }}.csr \
+    -CA $CERT_DIR/ca.pem \
+    -CAkey $CERT_DIR/ca-key.pem \
+    -CAcreateserial \
+    -out $CERT_DIR/{{ host }}.pem \
+    -days $DAYS \
+    -extensions v3_req \
+    -extfile $CERT_DIR/{{ host }}-csr.conf
+
+# Cleanup CSR config
+rm $CERT_DIR/{{ host }}-csr.conf $CERT_DIR/{{ host }}.csr
+
+{% endfor %}
+
+# Create peer certificate (used for peer communication)
+cp $CERT_DIR/{{ groups['masters'][0] }}-key.pem $CERT_DIR/peer-key.pem
+cp $CERT_DIR/{{ groups['masters'][0] }}.pem $CERT_DIR/peer.pem
+
+# Create client certificate (used for client communication)
+cp $CERT_DIR/{{ groups['masters'][0] }}-key.pem $CERT_DIR/client-key.pem
+cp $CERT_DIR/{{ groups['masters'][0] }}.pem $CERT_DIR/client.pem
+
+# Create healthcheck certificate
+openssl genrsa -out $CERT_DIR/healthcheck-key.pem 4096
+openssl req -new -key $CERT_DIR/healthcheck-key.pem -out $CERT_DIR/healthcheck.csr -subj "/CN=etcd-healthcheck"
+openssl x509 -req -in $CERT_DIR/healthcheck.csr \
+    -CA $CERT_DIR/ca.pem \
+    -CAkey $CERT_DIR/ca-key.pem \
+    -CAcreateserial \
+    -out $CERT_DIR/healthcheck.pem \
+    -days $DAYS
+
+# Cleanup healthcheck CSR
+rm $CERT_DIR/healthcheck.csr
+
+# Set proper permissions
+chmod 600 $CERT_DIR/*.pem
+chmod 600 $CERT_DIR/*.key
+chown -R etcd:etcd $CERT_DIR
+
+echo "ETCD certificates generated successfully in $CERT_DIR"
+echo "CA certificate: $CERT_DIR/ca.pem"
+echo "Peer certificates: $CERT_DIR/peer.pem, $CERT_DIR/peer-key.pem"
+echo "Client certificates: $CERT_DIR/client.pem, $CERT_DIR/client-key.pem"
+echo "Healthcheck certificates: $CERT_DIR/healthcheck.pem, $CERT_DIR/healthcheck-key.pem"
+
+echo "Generating certificate for kubernetes API server"
+
+openssl genrsa -out $CERT_DIR/kubernetes-key.pem 4096
+
+cat > $CERT_DIR/kubernetes-csr.conf << EOF
+[req]
+req_extensions = v3_req
+distinguished_name = req_distinguished_name
+[req_distinguished_name]
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth, clientAuth
+subjectAltName = @alt_names
+[alt_names]
+DNS.1 = kubernetes
+DNS.2 = kubernetes.default
+DNS.3 = kubernetes.default.svc
+DNS.4 = kubernetes.default.svc.cluster.local
+DNS.5 = localhost
+{% for host in groups['masters'] %}
+DNS.{{ 6 + loop.index0 }} = {{ host }}
+IP.{{ 1 + loop.index0 }} = {{ hostvars[host]['node_ip'] }}
+{% endfor %}
+IP.{{ groups['masters'] | length + 1 }} = 127.0.0.1
+IP.{{ groups['masters'] | length + 2 }} = {{ cluster_vip | default('127.0.0.1') }}
+EOF
+
+openssl req -new -key $CERT_DIR/kubernetes-key.pem -out $CERT_DIR/kubernetes.csr -subj "/CN=kube-apiserver" -config $CERT_DIR/kubernetes-csr.conf
+
+openssl x509 -req -in $CERT_DIR/kubernetes.csr \
+    -CA $CERT_DIR/ca.pem \
+    -CAkey $CERT_DIR/ca-key.pem \
+    -CAcreateserial \
+    -out $CERT_DIR/kubernetes.pem \
+    -days $DAYS \
+    -extensions v3_req \
+    -extfile $CERT_DIR/kubernetes-csr.conf
+
+rm $CERT_DIR/kubernetes-csr.conf $CERT_DIR/kubernetes.csr
+
+echo "Kubernetes API server certificates: $CERT_DIR/kubernetes.pem, $CERT_DIR/kubernetes-key.pem"

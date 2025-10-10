@@ -1314,12 +1314,12 @@
         - inventory_hostname == "master-node-1"
         - kubeadm_config_check.rc != 0
 
-    - name: Обновление kubeadm-config ConfigMap если существует
-      shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf create cm kubeadm-config -n kube-system --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config.yaml --dry-run=client -o yaml | kubectl apply -f -
-      when:
-        - inventory_hostname == "master-node-1"
-        - kubeadm_config_check.rc == 0
+    #- name: Обновление kubeadm-config ConfigMap если существует
+    #  shell: |
+    #   kubectl --kubeconfig=/etc/kubernetes/admin.conf create cm kubeadm-config -n kube-system --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config.yaml --dry-run=client -o yaml | kubectl apply -f -
+    #  when:
+    #    - inventory_hostname == "master-node-1"
+    #    - kubeadm_config_check.rc == 0
 
     - name: Проверка создания kubeadm-config
       shell: |

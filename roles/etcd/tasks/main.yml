@@ -32,7 +32,7 @@
 
 - name: Copy etcd archive to nodes
   copy:
-    src: "files/binaries/{{ etcd_archive }}"
+    src: "{{ playbook_dir }}/files/binaries/{{ etcd_archive }}"
     dest: "/tmp/{{ etcd_archive }}"
     owner: root
     group: root

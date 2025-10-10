@@ -58,38 +58,7 @@ rm $CERT_DIR/{{ host }}-csr.conf $CERT_DIR/{{ host }}.csr
 
 {% endfor %}
 
-# Create peer certificate (used for peer communication)
-cp $CERT_DIR/{{ groups['masters'][0] }}-key.pem $CERT_DIR/peer-key.pem
-cp $CERT_DIR/{{ groups['masters'][0] }}.pem $CERT_DIR/peer.pem
-
-# Create client certificate (used for client communication)
-cp $CERT_DIR/{{ groups['masters'][0] }}-key.pem $CERT_DIR/client-key.pem
-cp $CERT_DIR/{{ groups['masters'][0] }}.pem $CERT_DIR/client.pem
-
-# Create healthcheck certificate
-openssl genrsa -out $CERT_DIR/healthcheck-key.pem 4096
-openssl req -new -key $CERT_DIR/healthcheck-key.pem -out $CERT_DIR/healthcheck.csr -subj "/CN=etcd-healthcheck"
-openssl x509 -req -in $CERT_DIR/healthcheck.csr \
-    -CA $CERT_DIR/ca.pem \
-    -CAkey $CERT_DIR/ca-key.pem \
-    -CAcreateserial \
-    -out $CERT_DIR/healthcheck.pem \
-    -days $DAYS
-
-# Cleanup healthcheck CSR
-rm $CERT_DIR/healthcheck.csr
-
-# Set proper permissions
-chmod 600 $CERT_DIR/*.pem
-chmod 600 $CERT_DIR/*.key
-chown -R etcd:etcd $CERT_DIR
-
-echo "ETCD certificates generated successfully in $CERT_DIR"
-echo "CA certificate: $CERT_DIR/ca.pem"
-echo "Peer certificates: $CERT_DIR/peer.pem, $CERT_DIR/peer-key.pem"
-echo "Client certificates: $CERT_DIR/client.pem, $CERT_DIR/client-key.pem"
-echo "Healthcheck certificates: $CERT_DIR/healthcheck.pem, $CERT_DIR/healthcheck-key.pem"
-
+# Create Kubernetes API server certificate
 echo "Generating certificate for kubernetes API server"
 
 openssl genrsa -out $CERT_DIR/kubernetes-key.pem 4096
@@ -131,4 +100,18 @@ openssl x509 -req -in $CERT_DIR/kubernetes.csr \
 
 rm $CERT_DIR/kubernetes-csr.conf $CERT_DIR/kubernetes.csr
 
+# Create peer certificate (used for peer communication)
+cp $CERT_DIR/{{ groups['masters'][0] }}-key.pem $CERT_DIR/peer-key.pem
+cp $CERT_DIR/{{ groups['masters'][0] }}.pem $CERT_DIR/peer.pem
+
+# Create client certificate (used for client communication)
+cp $CERT_DIR/{{ groups['masters'][0] }}-key.pem $CERT_DIR/client-key.pem
+cp $CERT_DIR/{{ groups['masters'][0] }}.pem $CERT_DIR/client.pem
+
+# Set proper permissions
+chmod 600 $CERT_DIR/*.pem
+chmod 600 $CERT_DIR/*.key
+chown -R etcd:etcd $CERT_DIR
+
+echo "ETCD certificates generated successfully in $CERT_DIR"
 echo "Kubernetes API server certificates: $CERT_DIR/kubernetes.pem, $CERT_DIR/kubernetes-key.pem"

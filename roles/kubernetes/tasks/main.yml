@@ -194,86 +194,54 @@
     kubeadm init phase certs all --config /home/{{ k8s_user }}/kubeadm-config.yaml
   when: inventory_hostname == "master-node-1"
 
-- name: Копирование сертификатов Kubernetes на все мастер-ноды
+- name: Копирование всех сертификатов одним архивом на другие мастера
   block:
-    - name: Создание директории pki на других мастерах
-      file:
-        path: /etc/kubernetes/pki
-        state: directory
+    - name: Создание tar архива с сертификатами на master-node-1
+      shell: |
+        tar -czf /tmp/k8s-certs.tar.gz -C /etc/kubernetes/pki .
+      delegate_to: master-node-1
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Получение архива с сертификатами
+      slurp:
+        src: /tmp/k8s-certs.tar.gz
+      register: certs_archive
+      delegate_to: master-node-1
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование архива на текущую ноду
+      copy:
+        content: "{{ certs_archive.content }}"
+        dest: /tmp/k8s-certs.tar.gz
+        mode: '0644'
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Распаковка сертификатов
+      unarchive:
+        src: /tmp/k8s-certs.tar.gz
+        dest: /etc/kubernetes/pki
+        remote_src: yes
         owner: root
         group: root
-        mode: '0755'
       become: yes
       when: inventory_hostname != "master-node-1"
 
-    - name: Копирование основных сертификатов CA
-      synchronize:
-        src: /etc/kubernetes/pki/ca.crt
-        dest: /etc/kubernetes/pki/ca.crt
-        mode: push
-      delegate_to: master-node-1
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Копирование CA ключа
-      synchronize:
-        src: /etc/kubernetes/pki/ca.key
-        dest: /etc/kubernetes/pki/ca.key
-        mode: push
-      delegate_to: master-node-1
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Копирование front-proxy сертификатов
-      synchronize:
-        src: /etc/kubernetes/pki/front-proxy-ca.crt
-        dest: /etc/kubernetes/pki/front-proxy-ca.crt
-        mode: push
-      delegate_to: master-node-1
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Копирование front-proxy ключа
-      synchronize:
-        src: /etc/kubernetes/pki/front-proxy-ca.key
-        dest: /etc/kubernetes/pki/front-proxy-ca.key
-        mode: push
-      delegate_to: master-node-1
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Копирование sa ключей
-      synchronize:
-        src: /etc/kubernetes/pki/sa.key
-        dest: /etc/kubernetes/pki/sa.key
-        mode: push
-      delegate_to: master-node-1
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Копирование sa pub ключа
-      synchronize:
-        src: /etc/kubernetes/pki/sa.pub
-        dest: /etc/kubernetes/pki/sa.pub
-        mode: push
-      delegate_to: master-node-1
-      become: yes
-      when: inventory_hostname != "master-node-1"
-
-    - name: Копирование всей директории etcd
-      synchronize:
-        src: /etc/kubernetes/pki/etcd/
-        dest: /etc/kubernetes/pki/etcd/
-        recursive: yes
-        mode: push
-      delegate_to: master-node-1
+    - name: Очистка временных файлов
+      file:
+        path: /tmp/k8s-certs.tar.gz
+        state: absent
       become: yes
       when: inventory_hostname != "master-node-1"
 
     - name: Проверка скопированных сертификатов
       shell: |
-        ls -la /etc/kubernetes/pki/
-        ls -la /etc/kubernetes/pki/etcd/ || echo "ETCD_NOT_COPIED"
+        echo "=== Основные сертификаты ==="
+        ls -la /etc/kubernetes/pki/ | grep -E "(ca|sa|front-proxy)"
+        echo "=== Etcd сертификаты ==="
+        ls -la /etc/kubernetes/pki/etcd/
       register: certs_check
       become: yes
       when: inventory_hostname != "master-node-1"

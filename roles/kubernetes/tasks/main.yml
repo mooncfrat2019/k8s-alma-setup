@@ -1333,9 +1333,15 @@
       when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 
-- name: Создание cluster-info ConfigMap
+- name: Создание правильного cluster-info ConfigMap
   block:
-    - name: Создание cluster-info ConfigMap
+    - name: Получение CA сертификата в base64
+      shell: |
+        cat /etc/kubernetes/pki/ca.crt | base64 -w0
+      register: ca_cert_base64
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание cluster-info ConfigMap с правильным kubeconfig
       shell: |
         kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
         apiVersion: v1
@@ -1348,7 +1354,7 @@
             apiVersion: v1
             clusters:
             - cluster:
-                certificate-authority-data: $(cat /etc/kubernetes/pki/ca.crt | base64 -w0)
+                certificate-authority-data: {{ ca_cert_base64.stdout }}
                 server: https://{{ cluster_vip }}:6443
               name: ""
             contexts: null
@@ -1359,10 +1365,15 @@
         EOF
       when: inventory_hostname == "master-node-1"
 
-    - name: Замена placeholder на реальный CA сертификат
+    - name: Проверка создания cluster-info
       shell: |
-        CA_CERT=$(cat /etc/kubernetes/pki/ca.crt | base64 -w0)
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf patch cm cluster-info -n kube-public -p "{\"data\":{\"kubeconfig\":\"$(kubectl get cm cluster-info -n kube-public -o jsonpath='{.data.kubeconfig}' | sed \"s|\\$(cat /etc/kubernetes/pki/ca.crt | base64 -w0)|${CA_CERT}|\")\"}}"
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm cluster-info -n kube-public -o yaml
+      register: cluster_info_check
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение содержимого cluster-info
+      debug:
+        var: cluster_info_check.stdout
       when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 

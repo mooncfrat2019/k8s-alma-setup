@@ -691,7 +691,14 @@
     mode: '0644'
   become: yes
 
-- name: Создание базовой конфигурации kubelet
+- name: Удаление старой конфигурации kubelet
+  file:
+    path: /var/lib/kubelet/config.yaml
+    state: absent
+  become: yes
+  ignore_errors: yes
+
+- name: Создание исправленной конфигурации kubelet
   copy:
     content: |
       apiVersion: kubelet.config.k8s.io/v1beta1
@@ -702,6 +709,13 @@
       - 10.96.0.10
       staticPodPath: /etc/kubernetes/manifests
       failSwapOn: false
+      authentication:
+        anonymous:
+          enabled: true
+      authorization:
+        mode: AlwaysAllow
+      rotateCertificates: true
+      clusterDomain: cluster.local
     dest: /var/lib/kubelet/config.yaml
     owner: root
     group: root
@@ -713,12 +727,28 @@
     daemon_reload: yes
   become: yes
 
-- name: Запуск kubelet
+- name: Перезапуск kubelet
+  systemd:
+    name: kubelet
+    state: restarted
+    enabled: yes
+  become: yes
+
+- name: Ожидание запуска kubelet
   systemd:
     name: kubelet
     state: started
-    enabled: yes
   become: yes
+
+- name: Проверка статуса kubelet
+  shell: |
+    systemctl status kubelet --no-pager -l
+  register: kubelet_final_status
+  become: yes
+
+- name: Отображение финального статуса kubelet
+  debug:
+    var: kubelet_final_status.stdout
 
 - name: Проверка здоровья Kubernetes API
   shell: |

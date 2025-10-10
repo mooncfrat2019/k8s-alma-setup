@@ -198,7 +198,7 @@
 - name: Set etcd cluster configuration
   set_fact:
     # Генерация списка всех участников кластера
-    etcd_initial_cluster: "{% for host in groups['masters'] %}etcd-{{ host }}={{ etcd_peer_protocol }}://{{ hostvars[host]['node_ip'] }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
+    etcd_initial_cluster: "{% for host in groups['masters'] %}etcd-{{ host }}={{ etcd_peer_protocol }}://{{ hostvars[host]['internal_ip'] }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
 
     # Настройки для текущей ноды
     etcd_listen_peer_urls: "{{ etcd_peer_protocol }}://{{ hostvars[inventory_hostname]['internal_ip'] }}:{{ etcd_peer_port }}"

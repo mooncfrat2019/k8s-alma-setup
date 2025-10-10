@@ -1310,7 +1310,7 @@
         kubectl --kubeconfig=/etc/kubernetes/admin.conf delete cm kubeadm-config -n kube-system --ignore-not-found=true
       when: inventory_hostname == "master-node-1"
 
-    - name: Создание правильного kubeadm-config с использованием v1beta4
+    - name: Создание правильного kubeadm-config с использованием
       shell: |
         kubectl --kubeconfig=/etc/kubernetes/admin.conf create cm kubeadm-config -n kube-system --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config.yaml
       when: inventory_hostname == "master-node-1"

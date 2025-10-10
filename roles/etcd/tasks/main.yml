@@ -30,9 +30,17 @@
     - /etc/etcd
     - /var/log/etcd
 
+- name: Copy etcd archive to nodes
+  copy:
+    src: "files/binaries/{{ etcd_archive }}"
+    dest: "/tmp/{{ etcd_archive }}"
+    owner: root
+    group: root
+    mode: '0644'
+
 - name: Extract etcd binary from archive
   unarchive:
-    src: "{{ playbook_dir }}/files/binaries/{{ etcd_archive }}"
+    src: "/tmp/{{ etcd_archive }}"
     dest: "/tmp"
     remote_src: yes
     creates: "/tmp/etcd-v{{ etcd_version }}-linux-amd64/etcd"
@@ -51,6 +59,14 @@
   notify:
     - reload systemd
 
+- name: Cleanup etcd archive and temp files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/tmp/{{ etcd_archive }}"
+    - "/tmp/etcd-v{{ etcd_version }}-linux-amd64"
+
 - name: Generate etcd certificates
   template:
     src: etcd-certificates.sh.j2
@@ -58,6 +74,7 @@
     mode: '0755'
   delegate_to: "{{ groups['masters'][0] }}"
   run_once: true
+  when: etcd_generate_certs
 
 - name: Execute certificate generation
   command: /tmp/generate-etcd-certs.sh
@@ -80,6 +97,36 @@
     state: absent
   delegate_to: "{{ groups['masters'][0] }}"
   run_once: true
+  when: etcd_generate_certs
+
+- name: Create Kubernetes PKI directory
+  file:
+    path: "{{ etcd_k8s_cert_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+  when: etcd_generate_certs
+
+- name: Copy etcd CA to Kubernetes PKI directory
+  copy:
+    src: "{{ etcd_cert_dir }}/ca.pem"
+    dest: "{{ etcd_k8s_cert_dir }}/etcd-ca.crt"
+    owner: root
+    group: root
+    mode: '0644'
+  when: etcd_generate_certs
+
+- name: Copy Kubernetes etcd client certificates
+  copy:
+    src: "{{ etcd_cert_dir }}/{{ item.src }}"
+    dest: "{{ etcd_k8s_cert_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - { src: 'kubernetes.pem', dest: 'apiserver-etcd-client.crt' }
+    - { src: 'kubernetes-key.pem', dest: 'apiserver-etcd-client.key' }
   when: etcd_generate_certs
 
 - name: Set etcd node-specific variables
@@ -127,39 +174,9 @@
   when: etcd_client_protocol == "http"
 
 - name: Verify etcd cluster health
-  command: "{{ etcd_install_dir }}/etcdctl --endpoints={{ etcd_client_protocol }}://{{ hostvars[inventory_hostname]['node_ip'] }}:{{ etcd_client_port }} {{ '--cacert=' + etcd_cert_dir + '/ca.pem --cert=' + etcd_cert_dir + '/etcd.pem --key=' + etcd_cert_dir + '/etcd-key.pem' if etcd_client_protocol == 'https' else '' }} endpoint health"
+  command: "{{ etcd_install_dir }}/etcdctl --endpoints={{ etcd_client_protocol }}://{{ hostvars[inventory_hostname]['node_ip'] }}:{{ etcd_client_port }} {{ '--cacert=' + etcd_cert_dir + '/ca.pem --cert=' + etcd_cert_dir + '/client.pem --key=' + etcd_cert_dir + '/client-key.pem' if etcd_client_protocol == 'https' else '' }} endpoint health"
   register: etcd_health
   changed_when: false
   retries: 10
   delay: 5
   until: etcd_health.rc == 0
-
-- name: Create Kubernetes PKI directory
-  file:
-    path: "{{ etcd_k8s_cert_dir }}"
-    state: directory
-    owner: root
-    group: root
-    mode: '0750'
-  when: etcd_generate_certs
-
-- name: Copy etcd CA to Kubernetes PKI directory
-  copy:
-    src: "{{ etcd_cert_dir }}/ca.pem"
-    dest: "{{ etcd_k8s_cert_dir }}/etcd-ca.crt"  # ← .crt для совместимости с k8s
-    owner: root
-    group: root
-    mode: '0644'
-  when: etcd_generate_certs
-
-- name: Copy Kubernetes etcd client certificates
-  copy:
-    src: "{{ etcd_cert_dir }}/{{ item.src }}"
-    dest: "{{ etcd_k8s_cert_dir }}/{{ item.dest }}"
-    owner: root
-    group: root
-    mode: '0644'
-  loop:
-    - { src: 'kubernetes.pem', dest: 'apiserver-etcd-client.crt' }
-    - { src: 'kubernetes-key.pem', dest: 'apiserver-etcd-client.key' }
-  when: etcd_generate_certs

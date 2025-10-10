@@ -1299,37 +1299,31 @@
 
 - name: Создание kubeadm-config ConfigMap
   block:
-    - name: Проверка существования kubeadm-config
-      shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubeadm-config -n kube-system
-      register: kubeadm_config_check
-      failed_when: false
-      changed_when: false
-      when: inventory_hostname == "master-node-1"
-
-    - name: Создание kubeadm-config ConfigMap если не существует
-      shell: |
-        kubectl --kubeconfig=/etc/kubernetes/admin.conf create cm kubeadm-config -n kube-system --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config.yaml
-      when:
-        - inventory_hostname == "master-node-1"
-        - kubeadm_config_check.rc != 0
-
-    #- name: Обновление kubeadm-config ConfigMap если существует
-    #  shell: |
-    #   kubectl --kubeconfig=/etc/kubernetes/admin.conf create cm kubeadm-config -n kube-system --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config.yaml --dry-run=client -o yaml | kubectl apply -f -
-    #  when:
-    #    - inventory_hostname == "master-node-1"
-    #    - kubeadm_config_check.rc == 0
-
-    - name: Проверка создания kubeadm-config
+    - name: Получение текущего kubeadm-config
       shell: |
         kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubeadm-config -n kube-system -o yaml
-      register: kubeadm_config_verify
+      register: current_kubeadm_config
       when: inventory_hostname == "master-node-1"
 
-    - name: Отображение статуса kubeadm-config
+    - name: Удаление неправильного kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf delete cm kubeadm-config -n kube-system --ignore-not-found=true
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание правильного kubeadm-config с использованием v1beta4
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf create cm kubeadm-config -n kube-system --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config.yaml
+      when: inventory_hostname == "master-node-1"
+
+    - name: Проверка версии API в конфиге
+      shell: |
+        grep "apiVersion:" /home/{{ k8s_user }}/kubeadm-config.yaml
+      register: api_version_check
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение версии API
       debug:
-        msg: "kubeadm-config ConfigMap создан успешно"
+        var: api_version_check.stdout
       when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 

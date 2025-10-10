@@ -197,11 +197,18 @@
 
 - name: Set etcd cluster configuration
   set_fact:
-    etcd_initial_cluster: "{% for host in groups['masters'] %}etcd-{{ host }}={{ etcd_peer_protocol }}://{{ hostvars[host]['ansible_host'] }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
-    etcd_listen_peer_urls: "{{ etcd_peer_protocol }}://{{ hostvars[inventory_hostname]['node_ip'] }}:{{ etcd_peer_port }}"
-    etcd_listen_client_urls: "{{ etcd_client_protocol }}://{{ hostvars[inventory_hostname]['node_ip'] }}:{{ etcd_client_port }},{{ etcd_client_protocol }}://127.0.0.1:{{ etcd_client_port }}"
-    etcd_advertise_client_urls: "{{ etcd_client_protocol }}://{{ hostvars[inventory_hostname]['node_ip'] }}:{{ etcd_client_port }}"
-    etcd_initial_advertise_peer_urls: "{{ etcd_peer_protocol }}://{{ hostvars[inventory_hostname]['node_ip'] }}:{{ etcd_peer_port }}"
+    # Генерация списка всех участников кластера
+    etcd_initial_cluster: >-
+      {% for host in groups['masters'] -%}
+      etcd-{{ host }}={{ etcd_peer_protocol }}://{{ hostvars[host]['internal_ip'] }}:{{ etcd_peer_port }}
+      {% if not loop.last %},{% endif %}
+      {% endfor %}
+
+    # Настройки для текущей ноды
+    etcd_listen_peer_urls: "{{ etcd_peer_protocol }}://{{ hostvars[inventory_hostname]['internal_ip'] }}:{{ etcd_peer_port }}"
+    etcd_listen_client_urls: "{{ etcd_client_protocol }}://{{ hostvars[inventory_hostname]['internal_ip'] }}:{{ etcd_client_port }},{{ etcd_client_protocol }}://127.0.0.1:{{ etcd_client_port }}"
+    etcd_initial_advertise_peer_urls: "{{ etcd_peer_protocol }}://{{ hostvars[inventory_hostname]['internal_ip'] }}:{{ etcd_peer_port }}"
+    etcd_advertise_client_urls: "{{ etcd_client_protocol }}://{{ hostvars[inventory_hostname]['internal_ip'] }}:{{ etcd_client_port }}"
 
 - name: Configure etcd
   template:

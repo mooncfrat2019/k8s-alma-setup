@@ -1381,6 +1381,85 @@
       when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
 
+- name: Создание kubelet-config ConfigMap
+  block:
+    - name: Проверка существования kubelet-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubelet-config -n kube-system
+      register: kubelet_config_check
+      failed_when: false
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание kubelet-config ConfigMap
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: kubelet-config
+          namespace: kube-system
+        data:
+          kubelet: |
+            apiVersion: kubelet.config.k8s.io/v1beta3
+            kind: KubeletConfiguration
+            cgroupDriver: systemd
+            clusterDomain: cluster.local
+            clusterDNS:
+            - 10.96.0.10
+            staticPodPath: /etc/kubernetes/manifests
+            failSwapOn: false
+        EOF
+      when:
+        - inventory_hostname == "master-node-1"
+        - kubelet_config_check.rc != 0
+
+    - name: Проверка создания kubelet-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubelet-config -n kube-system -o yaml
+      register: kubelet_config_verify
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение статуса kubelet-config
+      debug:
+        var: kubelet_config_verify.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Настройка RBAC для доступа к kubelet-config
+  block:
+    - name: Создание ClusterRole для чтения kubelet-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: kubelet-config-reader
+        rules:
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          resourceNames: ["kubelet-config"]
+          verbs: ["get"]
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для bootstrap токенов
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kubeadm:kubelet-config
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: kubelet-config-reader
+        subjects:
+        - kind: Group
+          name: system:bootstrappers:kubeadm:default-node-token
+        EOF
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
 - name: Создание правильного cluster-info ConfigMap
   block:
     - name: Получение CA сертификата в base64

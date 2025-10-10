@@ -109,8 +109,14 @@ cp $CERT_DIR/{{ groups['masters'][0] }}-key.pem $CERT_DIR/client-key.pem
 cp $CERT_DIR/{{ groups['masters'][0] }}.pem $CERT_DIR/client.pem
 
 # Set proper permissions
-chmod 600 $CERT_DIR/*.pem
-chmod 600 $CERT_DIR/*.key
+if ls $CERT_DIR/*.pem >/dev/null 2>&1; then
+    chmod 600 $CERT_DIR/*.pem
+fi
+
+if ls $CERT_DIR/*.key >/dev/null 2>&1; then
+    chmod 600 $CERT_DIR/*.key
+fi
+
 chown -R etcd:etcd $CERT_DIR
 
 echo "ETCD certificates generated successfully in $CERT_DIR"

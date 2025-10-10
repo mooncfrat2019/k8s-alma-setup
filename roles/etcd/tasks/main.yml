@@ -67,6 +67,17 @@
     - "/tmp/{{ etcd_archive }}"
     - "/tmp/etcd-v{{ etcd_version }}-linux-amd64"
 
+- name: Create etcd cert directory on certificate generator node
+  file:
+    path: "{{ etcd_cert_dir }}"
+    state: directory
+    owner: etcd
+    group: etcd
+    mode: '0750'
+  delegate_to: "{{ groups['masters'][0] }}"
+  run_once: true
+  when: etcd_generate_certs
+
 - name: Generate etcd certificates
   template:
     src: etcd-certificates.sh.j2

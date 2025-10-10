@@ -35,9 +35,12 @@ subjectAltName = @alt_names
 DNS.1 = {{ host }}
 DNS.2 = localhost
 DNS.3 = etcd-{{ host }}
+DNS.4 = {{ hostvars[host]['inventory_hostname'] }}
 IP.1 = {{ hostvars[host]['node_ip'] }}
 IP.2 = 127.0.0.1
 IP.3 = ::1
+IP.4 = {{ hostvars[host]['ansible_host'] }}
+IP.5 = {{ hostvars[host]['internal_ip'] }}
 EOF
 
 # Generate certificate signing request

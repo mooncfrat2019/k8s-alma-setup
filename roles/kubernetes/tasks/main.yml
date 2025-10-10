@@ -1297,6 +1297,75 @@
     worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout | regex_search('--token [^ ]+') | regex_replace('--token ') }} --discovery-token-ca-cert-hash {{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash [^ ]+') | regex_replace('--discovery-token-ca-cert-hash ') }}"
   when: inventory_hostname == "master-node-1"
 
+- name: Создание kubeadm-config ConfigMap
+  block:
+    - name: Проверка существования kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubeadm-config -n kube-system
+      register: kubeadm_config_check
+      failed_when: false
+      changed_when: false
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание kubeadm-config ConfigMap если не существует
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf create cm kubeadm-config -n kube-system --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config.yaml
+      when:
+        - inventory_hostname == "master-node-1"
+        - kubeadm_config_check.rc != 0
+
+    - name: Обновление kubeadm-config ConfigMap если существует
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf create cm kubeadm-config -n kube-system --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config.yaml --dry-run=client -o yaml | kubectl apply -f -
+      when:
+        - inventory_hostname == "master-node-1"
+        - kubeadm_config_check.rc == 0
+
+    - name: Проверка создания kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubeadm-config -n kube-system -o yaml
+      register: kubeadm_config_verify
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение статуса kubeadm-config
+      debug:
+        msg: "kubeadm-config ConfigMap создан успешно"
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Создание cluster-info ConfigMap
+  block:
+    - name: Создание cluster-info ConfigMap
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: cluster-info
+          namespace: kube-public
+        data:
+          kubeconfig: |
+            apiVersion: v1
+            clusters:
+            - cluster:
+                certificate-authority-data: $(cat /etc/kubernetes/pki/ca.crt | base64 -w0)
+                server: https://{{ cluster_vip }}:6443
+              name: ""
+            contexts: null
+            current-context: ""
+            kind: Config
+            preferences: {}
+            users: null
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Замена placeholder на реальный CA сертификат
+      shell: |
+        CA_CERT=$(cat /etc/kubernetes/pki/ca.crt | base64 -w0)
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf patch cm cluster-info -n kube-public -p "{\"data\":{\"kubeconfig\":\"$(kubectl get cm cluster-info -n kube-public -o jsonpath='{.data.kubeconfig}' | sed \"s|\\$(cat /etc/kubernetes/pki/ca.crt | base64 -w0)|${CA_CERT}|\")\"}}"
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
 - name: Присоединение других мастер-узлов
   command: "{{ hostvars['master-node-1']['control_plane_join_command'] }}"
   when:

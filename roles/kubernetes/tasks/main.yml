@@ -353,6 +353,24 @@
         mode: '0755'
       become: yes
 
+    - name: Удаление старых kubeconfig файлов
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes/kubelet.conf
+        - /etc/kubernetes/controller-manager.conf
+        - /etc/kubernetes/scheduler.conf
+        - /etc/kubernetes/admin.conf
+      become: yes
+      when: inventory_hostname == "master-node-1"
+
+    - name: Удаление kubeconfig из домашней директории пользователя
+      file:
+        path: "{{ k8s_home }}/.kube/config"
+        state: absent
+      when: inventory_hostname == "master-node-1"
+
     - name: Иницализация конфига kubelet
       command: kubeadm init phase kubeconfig kubelet --config /home/{{ k8s_user }}/kubeadm-config.yaml
       when: inventory_hostname == "master-node-1"

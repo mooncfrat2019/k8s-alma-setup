@@ -256,6 +256,12 @@
       command: kubeadm config images pull --config /home/{{ k8s_user }}/kubeadm-config.yaml
       when: inventory_hostname == "master-node-1"
 
+    - name: Полное удаление manifests директории со всем содержимым
+      file:
+        path: /etc/kubernetes/manifests/
+        state: absent
+      become: yes
+
     - name: Пересоздание manifest директории
       file:
         path: /etc/kubernetes/manifests/

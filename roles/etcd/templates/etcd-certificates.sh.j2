@@ -32,7 +32,7 @@ keyUsage = digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth, clientAuth
 subjectAltName = @alt_names
 [alt_names]
-DNS.1 = {{ host }}
+DNS.1 = 192.168.0.1
 DNS.2 = localhost
 DNS.3 = etcd-{{ host }}
 DNS.4 = {{ hostvars[host]['inventory_hostname'] }}

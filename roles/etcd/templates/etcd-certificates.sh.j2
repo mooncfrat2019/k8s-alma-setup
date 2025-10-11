@@ -82,12 +82,27 @@ DNS.2 = kubernetes.default
 DNS.3 = kubernetes.default.svc
 DNS.4 = kubernetes.default.svc.cluster.local
 DNS.5 = localhost
-{% for host in groups['masters'] %}
-DNS.{{ 6 + loop.index0 }} = {{ host }}
-IP.{{ 1 + loop.index0 }} = {{ hostvars[host]['node_ip'] }}
+DNS.6 = master-node-1
+DNS.7 = master-node-2
+DNS.8 = master-node-3
+DNS.9 = {{ host }}
+DNS.10 = ectd-{{ host }}
+DNS.11 = ectd-master-node-1
+DNS.12 = ectd-master-node-2
+DNS.13 = ectd-master-node-3
+DNS.14 = k8s-etcd-cluster
+DNS.15 = kubernetes.default.svc.cluster.k8s-ha.local
+IP.1 = 127.0.0.1
+IP.2 = ::1
+IP.3 = {{ host_1 }}
+IP.4 = {{ host_2 }}
+IP.5 = {{ host_3 }}
+IP.6 = {{ in_ip_1 }}
+IP.7 = {{ in_ip_2 }}
+IP.8 = {{ in_ip_3 }}
+{% for master in groups['masters'] %}
+IP.{{ 9 + loop.index0 }} = {{ hostvars[master]['internal_ip'] }}  # ← ВНУТРЕННИЕ IP ВСЕХ узлов
 {% endfor %}
-IP.{{ groups['masters'] | length + 1 }} = 127.0.0.1
-IP.{{ groups['masters'] | length + 2 }} = {{ cluster_vip | default('127.0.0.1') }}
 EOF
 
 openssl req -new -key $CERT_DIR/kubernetes-key.pem -out $CERT_DIR/kubernetes.csr -subj "/CN=kube-apiserver" -config $CERT_DIR/kubernetes-csr.conf

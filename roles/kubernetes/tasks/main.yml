@@ -529,11 +529,11 @@
 - name: Установка CNI плагина (Flannel)
   block:
     - name: Применение Flannel
-      command: kubectl --config=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+      command: kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
       when: inventory_hostname == "master-node-1"
 
     - name: Ожидание запуска Flannel
-      command: kubectl wait --for=condition=ready pod -l app=flannel -n kube-flannel --timeout=300s
+      command: kubectl --kubeconfig=/etc/kubernetes/admin.conf wait --for=condition=ready pod -l app=flannel -n kube-flannel --timeout=300s
       when: inventory_hostname == "master-node-1"
 
 - name: Присоединение остальных control-plane узлов

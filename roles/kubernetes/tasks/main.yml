@@ -162,23 +162,101 @@
     group: "{{ k8s_group }}"
     mode: 0644
 
-- name: Генерация сертификатов Kubernetes на master-node-1
+- name: Принудительная перегенерация всех сертификатов
   block:
-    - name: Генерация сертификатов
+    - name: Проверка текущих SAN в сертификате (если существует)
+      shell: |
+        if [ -f /etc/kubernetes/pki/apiserver.crt ]; then
+          openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text -noout | grep -A20 "X509v3 Subject Alternative Name"
+        else
+          echo "Certificate does not exist yet"
+        fi
+      register: current_san_check
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение текущих SAN
+      debug:
+        var: current_san_check.stdout
+      when: inventory_hostname == "master-node-1"
+
+    - name: Удаление ВСЕХ существующих сертификатов
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes/pki/apiserver.crt
+        - /etc/kubernetes/pki/apiserver.key
+        - /etc/kubernetes/pki/apiserver-kubelet-client.crt
+        - /etc/kubernetes/pki/apiserver-kubelet-client.key
+        - /etc/kubernetes/pki/front-proxy-client.crt
+        - /etc/kubernetes/pki/front-proxy-client.key
+        - /etc/kubernetes/pki/ca.crt
+        - /etc/kubernetes/pki/ca.key
+        - /etc/kubernetes/pki/sa.key
+        - /etc/kubernetes/pki/sa.pub
+        - /etc/kubernetes/pki/front-proxy-ca.crt
+        - /etc/kubernetes/pki/front-proxy-ca.key
+      become: yes
+      ignore_errors: yes
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание чистых директорий после удаления
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /etc/kubernetes/pki
+        - /etc/kubernetes/pki/etcd
+      become: yes
+      when: inventory_hostname == "master-node-1"
+
+    - name: Генерация всех Kubernetes сертификатов заново
       command: kubeadm init phase certs all --config /home/{{ k8s_user }}/kubeadm-config.yaml
       when: inventory_hostname == "master-node-1"
 
-    - name: Проверка сгенерированных сертификатов
+    - name: Проверка новых SAN в сертификате
       shell: |
-        ls -la /etc/kubernetes/pki/
-        ls -la /etc/kubernetes/pki/etcd/ || echo "No etcd certs"
-      register: certs_check
+        openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text -noout | grep -A20 "X509v3 Subject Alternative Name"
+      register: new_san_check
       when: inventory_hostname == "master-node-1"
 
-    - name: Отображение проверки сертификатов
+    - name: Отображение новых SAN
       debug:
-        var: certs_check.stdout
+        var: new_san_check.stdout
       when: inventory_hostname == "master-node-1"
+
+    - name: Проверка наличия kubernetes.default.svc.k8s-ha.local в SAN
+      shell: |
+        openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text -noout | grep "kubernetes.default.svc.k8s-ha.local"
+      register: k8s_domain_check
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение проверки домена
+      debug:
+        var: k8s_domain_check.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+#- name: Генерация сертификатов Kubernetes на master-node-1
+#  block:
+#    - name: Генерация сертификатов
+#      command: kubeadm init phase certs all --config /home/{{ k8s_user }}/kubeadm-config.yaml
+#      when: inventory_hostname == "master-node-1"
+#
+#    - name: Проверка сгенерированных сертификатов
+#      shell: |
+#        ls -la /etc/kubernetes/pki/
+#        ls -la /etc/kubernetes/pki/etcd/ || echo "No etcd certs"
+#      register: certs_check
+#      when: inventory_hostname == "master-node-1"
+#
+#    - name: Отображение проверки сертификатов
+#      debug:
+#        var: certs_check.stdout
+#      when: inventory_hostname == "master-node-1"
 
 - name: Копирование сертификатов через архив
   block:

@@ -176,72 +176,56 @@
         var: certs_check.stdout
       when: inventory_hostname == "master-node-1"
 
-- name: Копирование сертификатов с master-node-1 на хост Ansible
+- name: Копирование сертификатов через архив
   block:
-    - name: Создание директории для сертификатов в рабочей папке Ansible
-      file:
-        path: "{{ playbook_dir }}/k8s_certs_temp"
-        state: directory
-        mode: '0755'
-      delegate_to: localhost
-      run_once: true
-
-    - name: Получение списка сертификатов с master-node-1
-      find:
-        paths: /etc/kubernetes/pki
-        file_type: file
-        patterns: '*'
-        excludes: '*.yaml,*.yml,*.conf'
-      register: cert_files
+    - name: Создание tar архива с сертификатами на master-node-1
+      shell: |
+        tar -czf /tmp/k8s_certs.tar.gz -C /etc/kubernetes/pki .
       delegate_to: master-node-1
       become: yes
       run_once: true
 
-    - name: Скачивание сертификатов на хост Ansible
+    - name: Скачивание архива с сертификатами
       fetch:
-        src: "{{ item.path }}"
-        dest: "{{ playbook_dir }}/k8s_certs_temp/{{ item.path | basename }}"
+        src: /tmp/k8s_certs.tar.gz
+        dest: "{{ playbook_dir }}/k8s_certs.tar.gz"
         flat: yes
-      loop: "{{ cert_files.files }}"
       delegate_to: master-node-1
       become: yes
       run_once: true
 
-    - name: Установка правильных прав на скачанные файлы
+    - name: Очистка архива на master-node-1
       file:
-        path: "{{ playbook_dir }}/k8s_certs_temp/{{ item }}"
-        mode: "{{ '0644' if item.endswith('.crt') or item.endswith('.pem') else '0600' }}"
-        owner: "{{ ansible_user_id }}"
-        group: "{{ ansible_user_gid | default(omit) }}"
-      loop: "{{ cert_files.files | map(attribute='path') | map('basename') | list }}"
-      delegate_to: localhost
+        path: /tmp/k8s_certs.tar.gz
+        state: absent
+      delegate_to: master-node-1
+      become: yes
       run_once: true
 
-    - name: Проверка скачанных сертификатов
-      find:
-        paths: "{{ playbook_dir }}/k8s_certs_temp"
-        file_type: file
-      register: downloaded_certs
-      delegate_to: localhost
-      run_once: true
-
-    - name: Отображение скачанных сертификатов
-      debug:
-        msg: "Скачано сертификатов: {{ downloaded_certs.files | length }}"
-        var: downloaded_certs.files
-      delegate_to: localhost
-      run_once: true
-
-- name: Копирование сертификатов с хоста Ansible на другие узлы
-  block:
-    - name: Копирование сертификатов на другие мастера
-      copy:
-        src: "{{ playbook_dir }}/k8s_certs_temp/{{ item }}"
-        dest: "/etc/kubernetes/pki/{{ item }}"
+    - name: Распаковка архива на другие мастера
+      unarchive:
+        src: "{{ playbook_dir }}/k8s_certs.tar.gz"
+        dest: /etc/kubernetes/pki
+        remote_src: yes
         owner: root
         group: root
-        mode: "{{ '0644' if item.endswith('.crt') or item.endswith('.pem') else '0600' }}"
-      loop: "{{ downloaded_certs.files | map(attribute='path') | map('basename') | list }}"
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Установка правильных прав на ключевые файлы
+      file:
+        path: "/etc/kubernetes/pki/{{ item }}"
+        mode: '0600'
+        owner: root
+        group: root
+      loop:
+        - ca.key
+        - sa.key
+        - front-proxy-ca.key
+        - front-proxy-client.key
+        - apiserver.key
+        - apiserver-kubelet-client.key
+        - apiserver-etcd-client.key
       become: yes
       when: inventory_hostname != "master-node-1"
 
@@ -260,11 +244,9 @@
         var: certs_check.stdout
       when: inventory_hostname != "master-node-1"
 
-- name: Очистка временных файлов на хосте Ansible
-  block:
-    - name: Удаление временной директории
+    - name: Очистка архива на хосте Ansible
       file:
-        path: "{{ playbook_dir }}/k8s_certs_temp"
+        path: "{{ playbook_dir }}/k8s_certs.tar.gz"
         state: absent
       delegate_to: localhost
       run_once: true

@@ -1,0 +1,1810 @@
+---
+- name: Установка и настройка containerd
+  block:
+    - name: Копирование rpm пакета containerd на сервер
+      copy:
+        src: "files/packages/containerd-2.1.4-alt1.x86_64.rpm"
+        dest: /tmp/containerd.rpm
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Установка containerd через apt-get
+      shell: apt-get install -y /tmp/containerd.rpm
+      become: yes
+
+    - name: Очистка временного файла
+      file:
+        path: /tmp/containerd.rpm
+        state: absent
+      become: yes
+
+    - name: Создание базового конфига containerd
+      copy:
+        content: |
+          version = 2
+          root = "/var/lib/containerd"
+          state = "/run/containerd"
+          [grpc]
+            address = "/run/containerd/containerd.sock"
+          [plugins]
+            [plugins."io.containerd.grpc.v1.cri"]
+              sandbox_image = "{{ registry_url }}/pause:3.9"
+              [plugins."io.containerd.grpc.v1.cri".registry]
+                [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
+                  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."89.208.208.139:5000"]
+                    endpoint = ["http://89.208.208.139:5000"]
+                [plugins."io.containerd.grpc.v1.cri".registry.configs]
+                  [plugins."io.containerd.grpc.v1.cri".registry.configs."89.208.208.139:5000".tls]
+                    insecure_skip_verify = true
+              [plugins."io.containerd.grpc.v1.cri".containerd]
+                snapshotter = "overlayfs"
+                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+                  runtime_type = "io.containerd.runc.v2"
+                  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+                    SystemdCgroup = true
+        dest: /etc/containerd/config.toml
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Включение и запуск containerd
+      systemd:
+        name: containerd
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      become: yes
+
+    - name: Ожидание готовности containerd
+      wait_for:
+        path: /var/run/containerd/containerd.sock
+        state: present
+        timeout: 30
+      become: yes
+
+    - name: Проверка работы containerd
+      command: crictl version
+      register: containerd_check
+      changed_when: false
+      failed_when: containerd_check.rc != 0
+
+- name: Установка и настройка crictl
+  block:
+    - name: Копирование и распаковка crictl
+      unarchive:
+        src: "files/binares/crictl-v1.28.0-linux-amd64.tar.gz"
+        dest: /usr/bin
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: no
+      become: yes
+
+    - name: Настройка конфига crictl
+      copy:
+        content: |
+          runtime-endpoint: unix:///var/run/containerd/containerd.sock
+          image-endpoint: unix:///var/run/containerd/containerd.sock
+          timeout: 10
+          debug: false
+        dest: /etc/crictl.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Проверка работы crictl
+      command: crictl --version
+      register: crictl_result
+      changed_when: false
+
+- name: Обновление apt cache
+  shell: apt-get update
+  become: yes
+
+- name: Установка Kubernetes компонентов
+  shell: |
+    apt-get install -y \
+      kubernetes1.28-client \
+      kubernetes1.28-kubeadm \
+      kubernetes1.28-kubelet \
+      kubernetes1.28-master \
+      kubernetes1.28-node \
+      kubernetes1.28-common \
+      kubernetes1.28-crio \
+      python3-module-kubernetes-client \
+      kube-vip
+  become: yes
+
+- name: Подготовка директорий для Kubernetes
+  block:
+    - name: Остановка kubelet если запущен
+      systemd:
+        name: kubelet
+        state: stopped
+      become: yes
+      ignore_errors: yes
+
+    - name: Остановка статических подов Kubernetes
+      shell: |
+        # Удаляем все статические поды из manifests директории
+        rm -f /etc/kubernetes/manifests/*.yaml
+        # Даем время на остановку подов
+        sleep 10
+      become: yes
+      ignore_errors: yes
+
+    - name: Удаление старых директорий Kubernetes
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes
+        - /var/lib/etcd
+        - /var/lib/kubelet
+        - /var/lib/kube-proxy
+        - /var/run/kubernetes
+      become: yes
+      ignore_errors: yes
+
+    - name: Очистка данных containerd
+      shell: |
+        # Останавливаем все контейнеры
+        crictl rm -fa || true
+        # Удаляем все образы
+        crictl rmi -a || true
+        # Очищаем данные containerd
+        containerd config dump | grep root | cut -d'"' -f2 | xargs -I {} rm -rf {}/io.containerd.content.v1.content/*
+      become: yes
+      ignore_errors: yes
+
+    - name: Создание необходимых директорий
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /etc/kubernetes
+        - /var/lib/etcd
+        - /var/lib/kubelet
+        - /etc/kubernetes/manifests
+        - /etc/kubernetes/pki
+        - /var/lib/kube-proxy
+        - /etc/cni
+        - /var/lib/cni
+      become: yes
+  when: inventory_hostname in groups['masters']
+
+- name: Создание конфигурации kubeadm для первого мастера
+  template:
+    src: kubeadm-config.yaml.j2
+    dest: "/home/{{ k8s_user }}/kubeadm-config.yaml"
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0644
+  when: inventory_hostname == "master-node-1"
+
+- name: Генерация сертификатов Kubernetes
+  command: |
+    kubeadm init phase certs all --config /home/{{ k8s_user }}/kubeadm-config.yaml
+  when: inventory_hostname == "master-node-1"
+
+- name: Копирование сертификатов на другие мастера
+  block:
+    - name: Создание директории pki на других мастерах
+      file:
+        path: /etc/kubernetes/pki
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование CA сертификата
+      block:
+        - name: Получение CA сертификата
+          slurp:
+            src: /etc/kubernetes/pki/ca.crt
+          register: ca_crt
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование CA сертификата
+          copy:
+            content: "{{ ca_crt.content | b64decode }}"
+            dest: /etc/kubernetes/pki/ca.crt
+            owner: root
+            group: root
+            mode: '0644'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование CA ключа
+      block:
+        - name: Получение CA ключа
+          slurp:
+            src: /etc/kubernetes/pki/ca.key
+          register: ca_key
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование CA ключа
+          copy:
+            content: "{{ ca_key.content | b64decode }}"
+            dest: /etc/kubernetes/pki/ca.key
+            owner: root
+            group: root
+            mode: '0600'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование front-proxy CA
+      block:
+        - name: Получение front-proxy CA
+          slurp:
+            src: /etc/kubernetes/pki/front-proxy-ca.crt
+          register: front_proxy_ca_crt
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование front-proxy CA
+          copy:
+            content: "{{ front_proxy_ca_crt.content | b64decode }}"
+            dest: /etc/kubernetes/pki/front-proxy-ca.crt
+            owner: root
+            group: root
+            mode: '0644'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование front-proxy ключа
+      block:
+        - name: Получение front-proxy ключа
+          slurp:
+            src: /etc/kubernetes/pki/front-proxy-ca.key
+          register: front_proxy_ca_key
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование front-proxy ключа
+          copy:
+            content: "{{ front_proxy_ca_key.content | b64decode }}"
+            dest: /etc/kubernetes/pki/front-proxy-ca.key
+            owner: root
+            group: root
+            mode: '0600'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование SA ключей
+      block:
+        - name: Получение SA ключа
+          slurp:
+            src: /etc/kubernetes/pki/sa.key
+          register: sa_key
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование SA ключа
+          copy:
+            content: "{{ sa_key.content | b64decode }}"
+            dest: /etc/kubernetes/pki/sa.key
+            owner: root
+            group: root
+            mode: '0600'
+          become: yes
+
+        - name: Получение SA pub ключа
+          slurp:
+            src: /etc/kubernetes/pki/sa.pub
+          register: sa_pub
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование SA pub ключа
+          copy:
+            content: "{{ sa_pub.content | b64decode }}"
+            dest: /etc/kubernetes/pki/sa.pub
+            owner: root
+            group: root
+            mode: '0644'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Создание etcd директории
+      file:
+        path: /etc/kubernetes/pki/etcd
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование etcd CA
+      block:
+        - name: Получение etcd CA
+          slurp:
+            src: /etc/kubernetes/pki/etcd/ca.crt
+          register: etcd_ca_crt
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование etcd CA
+          copy:
+            content: "{{ etcd_ca_crt.content | b64decode }}"
+            dest: /etc/kubernetes/pki/etcd/ca.crt
+            owner: root
+            group: root
+            mode: '0644'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Копирование etcd CA ключа
+      block:
+        - name: Получение etcd CA ключа
+          slurp:
+            src: /etc/kubernetes/pki/etcd/ca.key
+          register: etcd_ca_key
+          delegate_to: master-node-1
+          become: yes
+
+        - name: Копирование etcd CA ключа
+          copy:
+            content: "{{ etcd_ca_key.content | b64decode }}"
+            dest: /etc/kubernetes/pki/etcd/ca.key
+            owner: root
+            group: root
+            mode: '0600'
+          become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Проверка скопированных сертификатов
+      shell: |
+        echo "=== Основные сертификаты ==="
+        ls -la /etc/kubernetes/pki/
+        echo "=== Etcd сертификаты ==="
+        ls -la /etc/kubernetes/pki/etcd/
+      register: certs_check
+      become: yes
+      when: inventory_hostname != "master-node-1"
+
+    - name: Отображение проверки сертификатов
+      debug:
+        var: certs_check.stdout
+      when: inventory_hostname != "master-node-1"
+  when: inventory_hostname in groups['masters']
+
+- name: Создание kubeconfig файлов
+  command: |
+    kubeadm init phase kubeconfig all --config /home/{{ k8s_user }}/kubeadm-config.yaml
+  when: inventory_hostname == "master-node-1"
+
+- name: Создание etcd манифеста для всех мастер-узлов
+  block:
+    - name: Создание списка etcd кластера
+      set_fact:
+        etcd_initial_cluster: "{% for host in groups['masters'] %}{{ host }}=https://{{ hostvars[host].node_ip }}:2380{% if not loop.last %},{% endif %}{% endfor %}"
+    - name: Отображение созданного etcd кластера
+      debug:
+        var: etcd_initial_cluster
+
+    - name: Создание манифеста etcd для текущего мастера
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            annotations:
+              kubeadm.kubernetes.io/etcd.advertise-client-urls: https://{{ master_ips[inventory_hostname] }}:2379
+            creationTimestamp: null
+            labels:
+              component: etcd
+              tier: control-plane
+            name: etcd
+            namespace: kube-system
+          spec:
+            containers:
+            - command:
+              - etcd
+              - --advertise-client-urls=https://{{ node_ip }}:2379
+              - --cert-file=/etc/kubernetes/pki/etcd/server.crt
+              - --client-cert-auth=true
+              - --data-dir=/var/lib/etcd
+              - --initial-advertise-peer-urls=https://{{ node_ip }}:2380
+              - --initial-cluster={{ etcd_initial_cluster }}
+              - --initial-cluster-state=new
+              - --key-file=/etc/kubernetes/pki/etcd/server.key
+              - --listen-client-urls=https://0.0.0.0:2379
+              - --listen-metrics-urls=http://0.0.0.0:2381
+              - --listen-peer-urls=https://0.0.0.0:2380
+              - --name={{ inventory_hostname }}
+              - --peer-cert-file=/etc/kubernetes/pki/etcd/peer.crt
+              - --peer-client-cert-auth=true
+              - --peer-key-file=/etc/kubernetes/pki/etcd/peer.key
+              - --peer-trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt
+              - --snapshot-count=10000
+              - --trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt
+              image: {{ registry_url }}/etcd:3.5.15-0
+              imagePullPolicy: IfNotPresent
+              livenessProbe:
+                failureThreshold: 8
+                httpGet:
+                  host: 127.0.0.1
+                  path: /health
+                  port: 2381
+                  scheme: HTTP
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 15
+              name: etcd
+              resources: {}
+              startupProbe:
+                failureThreshold: 24
+                httpGet:
+                  host: 127.0.0.1
+                  path: /health
+                  port: 2381
+                  scheme: HTTP
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 15
+              volumeMounts:
+              - mountPath: /var/lib/etcd
+                name: etcd-data
+              - mountPath: /etc/kubernetes/pki/etcd
+                name: etcd-certs
+            hostNetwork: true
+            priorityClassName: system-node-critical
+            volumes:
+            - hostPath:
+                path: /var/lib/etcd
+                type: DirectoryOrCreate
+              name: etcd-data
+            - hostPath:
+                path: /etc/kubernetes/pki/etcd
+                type: DirectoryOrCreate
+              name: etcd-certs
+        dest: /etc/kubernetes/manifests/etcd.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+  when: inventory_hostname in groups['masters']
+
+- name: Создание статических манифестов для первого мастера
+  block:
+    - name: Создание манифеста kube-apiserver
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            creationTimestamp: null
+            labels:
+              component: kube-apiserver
+              tier: control-plane
+            name: kube-apiserver
+            namespace: kube-system
+          spec:
+            containers:
+            - command:
+              - kube-apiserver
+              - --advertise-address={{ master_ips[inventory_hostname] }}
+              - --allow-privileged=true
+              - --authorization-mode=Node,RBAC
+              - --client-ca-file=/etc/kubernetes/pki/ca.crt
+              - --enable-admission-plugins=NodeRestriction
+              - --enable-bootstrap-token-auth=true
+              - --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
+              - --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt
+              - --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key
+              - --etcd-servers=https://127.0.0.1:2379
+              - --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt
+              - --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key
+              - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+              - --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt
+              - --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key
+              - --requestheader-allowed-names=front-proxy-client
+              - --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt
+              - --requestheader-extra-headers-prefix=X-Remote-Extra-
+              - --requestheader-group-headers=X-Remote-Group
+              - --requestheader-username-headers=X-Remote-User
+              - --secure-port=6443
+              - --service-account-issuer=https://kubernetes.default.svc.cluster.local
+              - --service-account-key-file=/etc/kubernetes/pki/sa.pub
+              - --service-account-signing-key-file=/etc/kubernetes/pki/sa.key
+              - --service-cluster-ip-range={{ service_cidr }}
+              - --tls-cert-file=/etc/kubernetes/pki/apiserver.crt
+              - --tls-private-key-file=/etc/kubernetes/pki/apiserver.key
+              image: {{ registry_url }}/kube-apiserver:v1.28.15
+              imagePullPolicy: IfNotPresent
+              livenessProbe:
+                failureThreshold: 8
+                httpGet:
+                  host: 127.0.0.1
+                  path: /livez
+                  port: 6443
+                  scheme: HTTPS
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 15
+              name: kube-apiserver
+              resources:
+                requests:
+                  cpu: 250m
+              startupProbe:
+                failureThreshold: 24
+                httpGet:
+                  host: 127.0.0.1
+                  path: /livez
+                  port: 6443
+                  scheme: HTTPS
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 15
+              volumeMounts:
+              - mountPath: /etc/ssl/certs
+                name: ca-certs
+                readOnly: true
+              - mountPath: /etc/ca-certificates
+                name: etc-pki
+                readOnly: true
+              - mountPath: /etc/kubernetes/pki
+                name: k8s-certs
+                readOnly: true
+              - mountPath: /usr/share/ca-certificates
+                name: usr-share-ca-certificates
+                readOnly: true
+            hostNetwork: true
+            priorityClassName: system-node-critical
+            volumes:
+            - hostPath:
+                path: /etc/ssl/certs
+                type: DirectoryOrCreate
+              name: ca-certs
+            - hostPath:
+                path: /etc/pki
+                type: DirectoryOrCreate
+              name: etc-pki
+            - hostPath:
+                path: /etc/kubernetes/pki
+                type: DirectoryOrCreate
+              name: k8s-certs
+            - hostPath:
+                path: /usr/share/ca-certificates
+                type: DirectoryOrCreate
+              name: usr-share-ca-certificates
+        dest: /etc/kubernetes/manifests/kube-apiserver.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Создание манифеста kube-controller-manager
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            creationTimestamp: null
+            labels:
+              component: kube-controller-manager
+              tier: control-plane
+            name: kube-controller-manager
+            namespace: kube-system
+          spec:
+            containers:
+            - command:
+              - kube-controller-manager
+              - --allocate-node-cidrs=true
+              - --authentication-kubeconfig=/etc/kubernetes/controller-manager.conf
+              - --authorization-kubeconfig=/etc/kubernetes/controller-manager.conf
+              - --bind-address=127.0.0.1
+              - --client-ca-file=/etc/kubernetes/pki/ca.crt
+              - --cluster-cidr={{ pod_network_cidr }}
+              - --cluster-name=kubernetes
+              - --cluster-signing-cert-file=/etc/kubernetes/pki/ca.crt
+              - --cluster-signing-key-file=/etc/kubernetes/pki/ca.key
+              - --controllers=*,bootstrapsigner,tokencleaner
+              - --kubeconfig=/etc/kubernetes/controller-manager.conf
+              - --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt
+              - --root-ca-file=/etc/kubernetes/pki/ca.crt
+              - --service-account-private-key-file=/etc/kubernetes/pki/sa.key
+              - --use-service-account-credentials=true
+              image: {{ registry_url }}/kube-controller-manager:v1.28.15
+              imagePullPolicy: IfNotPresent
+              livenessProbe:
+                failureThreshold: 8
+                httpGet:
+                  host: 127.0.0.1
+                  path: /healthz
+                  port: 10257
+                  scheme: HTTPS
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 15
+              name: kube-controller-manager
+              resources:
+                requests:
+                  cpu: 200m
+              startupProbe:
+                failureThreshold: 24
+                httpGet:
+                  host: 127.0.0.1
+                  path: /healthz
+                  port: 10257
+                  scheme: HTTPS
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 15
+              volumeMounts:
+              - mountPath: /etc/ssl/certs
+                name: ca-certs
+                readOnly: true
+              - mountPath: /etc/ca-certificates
+                name: etc-pki
+                readOnly: true
+              - mountPath: /usr/libexec/kubernetes/kubelet-plugins/volume/exec
+                name: flexvolume-dir
+              - mountPath: /etc/kubernetes/pki
+                name: k8s-certs
+                readOnly: true
+              - mountPath: /etc/kubernetes/controller-manager.conf
+                name: kubeconfig
+                readOnly: true
+              - mountPath: /usr/share/ca-certificates
+                name: usr-share-ca-certificates
+                readOnly: true
+            hostNetwork: true
+            priorityClassName: system-node-critical
+            volumes:
+            - hostPath:
+                path: /etc/ssl/certs
+                type: DirectoryOrCreate
+              name: ca-certs
+            - hostPath:
+                path: /etc/pki
+                type: DirectoryOrCreate
+              name: etc-pki
+            - hostPath:
+                path: /usr/libexec/kubernetes/kubelet-plugins/volume/exec
+                type: DirectoryOrCreate
+              name: flexvolume-dir
+            - hostPath:
+                path: /etc/kubernetes/pki
+                type: DirectoryOrCreate
+              name: k8s-certs
+            - hostPath:
+                path: /etc/kubernetes/controller-manager.conf
+                type: FileOrCreate
+              name: kubeconfig
+            - hostPath:
+                path: /usr/share/ca-certificates
+                type: DirectoryOrCreate
+              name: usr-share-ca-certificates
+        dest: /etc/kubernetes/manifests/kube-controller-manager.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+
+    - name: Создание манифеста kube-scheduler
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            creationTimestamp: null
+            labels:
+              component: kube-scheduler
+              tier: control-plane
+            name: kube-scheduler
+            namespace: kube-system
+          spec:
+            containers:
+            - command:
+              - kube-scheduler
+              - --authentication-kubeconfig=/etc/kubernetes/scheduler.conf
+              - --authorization-kubeconfig=/etc/kubernetes/scheduler.conf
+              - --bind-address=127.0.0.1
+              - --kubeconfig=/etc/kubernetes/scheduler.conf
+              image: {{ registry_url }}/kube-scheduler:v1.28.15
+              imagePullPolicy: IfNotPresent
+              livenessProbe:
+                failureThreshold: 8
+                httpGet:
+                  host: 127.0.0.1
+                  path: /healthz
+                  port: 10259
+                  scheme: HTTPS
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 15
+              name: kube-scheduler
+              resources:
+                requests:
+                  cpu: 100m
+              startupProbe:
+                failureThreshold: 24
+                httpGet:
+                  host: 127.0.0.1
+                  path: /healthz
+                  port: 10259
+                  scheme: HTTPS
+                initialDelaySeconds: 10
+                periodSeconds: 10
+                timeoutSeconds: 15
+              volumeMounts:
+              - mountPath: /etc/kubernetes/scheduler.conf
+                name: kubeconfig
+                readOnly: true
+            hostNetwork: true
+            priorityClassName: system-node-critical
+            volumes:
+            - hostPath:
+                path: /etc/kubernetes/scheduler.conf
+                type: FileOrCreate
+              name: kubeconfig
+        dest: /etc/kubernetes/manifests/kube-scheduler.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      become: yes
+  when: inventory_hostname == "master-node-1"
+
+- name: Создание systemd сервиса для kubelet
+  copy:
+    content: |
+      [Unit]
+      Description=Kubernetes Kubelet
+      Documentation=https://kubernetes.io/docs/home/
+      Wants=network-online.target
+      After=network-online.target
+      After=containerd.service
+
+      [Service]
+      ExecStart=/usr/bin/kubelet \
+        --config=/var/lib/kubelet/config.yaml \
+        --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock \
+        --pod-infra-container-image={{ registry_url }}/pause:3.9 \
+        --fail-swap-on=false \
+        --v=2
+      Restart=always
+      StartLimitInterval=0
+      RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+    dest: /lib/systemd/system/kubelet.service
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+
+- name: Удаление старой конфигурации kubelet
+  file:
+    path: /var/lib/kubelet/config.yaml
+    state: absent
+  become: yes
+  ignore_errors: yes
+
+- name: Создание исправленной конфигурации kubelet
+  copy:
+    content: |
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      cgroupDriver: systemd
+      clusterDomain: cluster.local
+      clusterDNS:
+      - 10.96.0.10
+      staticPodPath: /etc/kubernetes/manifests
+      failSwapOn: false
+      authentication:
+        anonymous:
+          enabled: true
+      authorization:
+        mode: AlwaysAllow
+      rotateCertificates: true
+      clusterDomain: cluster.local
+    dest: /var/lib/kubelet/config.yaml
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+
+- name: Перезагрузка демона systemd
+  systemd:
+    daemon_reload: yes
+  become: yes
+
+- name: Перезапуск kubelet
+  systemd:
+    name: kubelet
+    state: restarted
+    enabled: yes
+  become: yes
+
+- name: Ожидание запуска kubelet
+  systemd:
+    name: kubelet
+    state: started
+  become: yes
+
+- name: Проверка статуса kubelet
+  shell: |
+    systemctl status kubelet --no-pager -l
+  register: kubelet_final_status
+  become: yes
+
+- name: Отображение финального статуса kubelet
+  debug:
+    var: kubelet_final_status.stdout
+
+- name: Проверка здоровья Kubernetes API
+  shell: |
+    curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1:6443/healthz
+  register: api_health_check
+  failed_when: api_health_check.stdout != "200"
+  retries: 30
+  delay: 10
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение статуса проверки API
+  debug:
+    msg: "Kubernetes API health check: {{ api_health_check.stdout }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Копирование конфигурации для пользователя
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ k8s_home }}/.kube/config"
+    remote_src: yes
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0600
+  when: inventory_hostname == "master-node-1"
+
+# ИСПРАВЛЕННЫЙ БЛОК: Установка kube-proxy с правильным kubeconfig
+- name: Установка kube-proxy с правильной конфигурацией
+  block:
+    - name: Создание ServiceAccount для kube-proxy
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: kube-proxy
+          namespace: kube-system
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для kube-proxy
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kube-proxy
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: system:node-proxier
+        subjects:
+        - kind: ServiceAccount
+          name: kube-proxy
+          namespace: kube-system
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Удаление старого kube-proxy если существует
+      command: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf delete daemonset kube-proxy -n kube-system --ignore-not-found=true
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание DaemonSet для kube-proxy с монтированием pki
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: apps/v1
+        kind: DaemonSet
+        metadata:
+          labels:
+            k8s-app: kube-proxy
+          name: kube-proxy
+          namespace: kube-system
+        spec:
+          selector:
+            matchLabels:
+              k8s-app: kube-proxy
+          template:
+            metadata:
+              labels:
+                k8s-app: kube-proxy
+            spec:
+              containers:
+              - command:
+                - /usr/local/bin/kube-proxy
+                - --config=/var/lib/kube-proxy/config.conf
+                - --hostname-override=\$(NODE_NAME)
+                env:
+                - name: NODE_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: spec.nodeName
+                image: {{ registry_url }}/kube-proxy:v1.28.15
+                imagePullPolicy: IfNotPresent
+                name: kube-proxy
+                securityContext:
+                  privileged: true
+                volumeMounts:
+                - mountPath: /var/lib/kube-proxy
+                  name: kube-proxy
+                - mountPath: /run/xtables.lock
+                  name: xtables-lock
+                - mountPath: /lib/modules
+                  name: lib-modules
+                  readOnly: true
+                - mountPath: /etc/kubernetes/pki
+                  name: k8s-certs
+                  readOnly: true
+              hostNetwork: true
+              serviceAccountName: kube-proxy
+              tolerations:
+              - key: CriticalAddonsOnly
+                operator: Exists
+              - operator: Exists
+              volumes:
+              - configMap:
+                  defaultMode: 420
+                  name: kube-proxy
+                name: kube-proxy
+              - hostPath:
+                  path: /run/xtables.lock
+                  type: FileOrCreate
+                name: xtables-lock
+              - hostPath:
+                  path: /lib/modules
+                name: lib-modules
+              - hostPath:
+                  path: /etc/kubernetes/pki
+                  type: Directory
+                name: k8s-certs
+          updateStrategy:
+            type: RollingUpdate
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ConfigMap для kube-proxy
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: kube-proxy
+          namespace: kube-system
+          labels:
+            app: kube-proxy
+        data:
+          config.conf: |
+            apiVersion: kubeproxy.config.k8s.io/v1alpha1
+            kind: KubeProxyConfiguration
+            clientConnection:
+              kubeconfig: /var/lib/kube-proxy/kubeconfig.conf
+            clusterCIDR: "{{ pod_network_cidr }}"
+            mode: "iptables"
+            iptables:
+              masqueradeAll: false
+              masqueradeBit: 14
+              minSyncPeriod: 0s
+              syncPeriod: 30s
+            conntrack:
+              maxPerCore: 32768
+              min: 131072
+              tcpCloseWaitTimeout: 1h0m0s
+              tcpEstablishedTimeout: 24h0m0s
+          kubeconfig.conf: |
+            apiVersion: v1
+            kind: Config
+            clusters:
+            - cluster:
+                certificate-authority: /etc/kubernetes/pki/ca.crt
+                server: https://{{ cluster_vip }}:6443
+              name: default
+            contexts:
+            - context:
+                cluster: default
+                namespace: default
+                user: default
+              name: default
+            current-context: default
+            users:
+            - name: default
+              user:
+                tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Ожидание запуска kube-proxy
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf wait --for=condition=ready pod -l k8s-app=kube-proxy -n kube-system --timeout=120s
+      register: kube_proxy_wait
+      when: inventory_hostname == "master-node-1"
+
+    - name: Проверка статуса kube-proxy
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-system -l k8s-app=kube-proxy -o wide
+      register: kube_proxy_status
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение статуса kube-proxy
+      debug:
+        var: kube_proxy_status.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Установка Flannel CNI плагина
+  block:
+    - name: Очистка предыдущей установки Flannel (игнорируя ошибки)
+      block:
+        - name: Удаление ресурсов Flannel
+          command: |
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf delete -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml --ignore-not-found=true
+          register: flannel_cleanup
+          failed_when: false
+          changed_when: flannel_cleanup.rc == 0
+
+        - name: Удаление namespace kube-flannel
+          command: |
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf delete namespace kube-flannel --ignore-not-found=true
+          register: namespace_cleanup
+          failed_when: false
+          changed_when: namespace_cleanup.rc == 0
+
+        - name: Ожидание завершения удаления ресурсов
+          shell: |
+            kubectl --kubeconfig=/etc/kubernetes/admin.conf get all -n kube-flannel 2>&1 | grep -q "No resources found" && echo "DELETED" || echo "EXISTS"
+          register: cleanup_check
+          until: cleanup_check.stdout == "DELETED"
+          retries: 10
+          delay: 5
+
+        - name: Очистка CNI конфигураций
+          file:
+            path: /etc/cni/net.d
+            state: absent
+          failed_when: false
+
+        - name: Пересоздание директории CNI
+          file:
+            path: /etc/cni/net.d
+            state: directory
+            mode: '0755'
+
+        - name: Очистка CNI бинарников
+          file:
+            path: /opt/cni/bin/flannel
+            state: absent
+          failed_when: false
+
+      when: inventory_hostname == "master-node-1"
+
+    - name: Пауза после очистки
+      pause:
+        seconds: 10
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание манифеста Flannel
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            labels:
+              k8s-app: flannel
+              pod-security.kubernetes.io/enforce: privileged
+            name: kube-flannel
+          ---
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            labels:
+              k8s-app: flannel
+            name: flannel
+            namespace: kube-flannel
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRole
+          metadata:
+            labels:
+              k8s-app: flannel
+            name: flannel
+          rules:
+            - apiGroups:
+                - ""
+              resources:
+                - pods
+              verbs:
+                - get
+            - apiGroups:
+                - ""
+              resources:
+                - nodes
+              verbs:
+                - get
+                - list
+                - watch
+            - apiGroups:
+                - ""
+              resources:
+                - nodes/status
+              verbs:
+                - patch
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            labels:
+              k8s-app: flannel
+            name: flannel
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: flannel
+          subjects:
+            - kind: ServiceAccount
+              name: flannel
+              namespace: kube-flannel
+          ---
+          apiVersion: v1
+          data:
+            cni-conf.json: |
+              {
+                "name": "cbr0",
+                "cniVersion": "0.3.1",
+                "plugins": [
+                  {
+                    "type": "flannel",
+                    "delegate": {
+                      "hairpinMode": true,
+                      "isDefaultGateway": true
+                    }
+                  },
+                  {
+                    "type": "portmap",
+                    "capabilities": {
+                      "portMappings": true
+                    }
+                  }
+                ]
+              }
+            net-conf.json: |
+              {
+                "Network": "{{ pod_network_cidr }}",
+                "EnableNFTables": false,
+                "Backend": {
+                  "Type": "vxlan"
+                }
+              }
+          kind: ConfigMap
+          metadata:
+            labels:
+              app: flannel
+              k8s-app: flannel
+              tier: node
+            name: kube-flannel-cfg
+            namespace: kube-flannel
+          ---
+          apiVersion: apps/v1
+          kind: DaemonSet
+          metadata:
+            labels:
+              app: flannel
+              k8s-app: flannel
+              tier: node
+            name: kube-flannel-ds
+            namespace: kube-flannel
+          spec:
+            selector:
+              matchLabels:
+                app: flannel
+                k8s-app: flannel
+            template:
+              metadata:
+                labels:
+                  app: flannel
+                  k8s-app: flannel
+                  tier: node
+              spec:
+                affinity:
+                  nodeAffinity:
+                    requiredDuringSchedulingIgnoredDuringExecution:
+                      nodeSelectorTerms:
+                        - matchExpressions:
+                            - key: kubernetes.io/os
+                              operator: In
+                              values:
+                                - linux
+                containers:
+                  - args:
+                      - --ip-masq
+                      - --kube-subnet-mgr
+                    command:
+                      - /opt/bin/flanneld
+                    env:
+                      - name: POD_NAME
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.name
+                      - name: POD_NAMESPACE
+                        valueFrom:
+                          fieldRef:
+                            fieldPath: metadata.namespace
+                      - name: EVENT_QUEUE_DEPTH
+                        value: "5000"
+                      - name: CONT_WHEN_CACHE_NOT_READY
+                        value: "false"
+                    image: {{ registry_url }}/flannel:v0.27.4
+                    name: kube-flannel
+                    resources:
+                      requests:
+                        cpu: 100m
+                        memory: 50Mi
+                    securityContext:
+                      capabilities:
+                        add:
+                          - NET_ADMIN
+                          - NET_RAW
+                      privileged: false
+                    volumeMounts:
+                      - mountPath: /run/flannel
+                        name: run
+                      - mountPath: /etc/kube-flannel/
+                        name: flannel-cfg
+                      - mountPath: /run/xtables.lock
+                        name: xtables-lock
+                hostNetwork: true
+                initContainers:
+                  - args:
+                      - -f
+                      - /flannel
+                      - /opt/cni/bin/flannel
+                    command:
+                      - cp
+                    image: {{ registry_url }}/flannel-cni-plugin:v1.8.0
+                    name: install-cni-plugin
+                    volumeMounts:
+                      - mountPath: /opt/cni/bin
+                        name: cni-plugin
+                  - args:
+                      - -f
+                      - /etc/kube-flannel/cni-conf.json
+                      - /etc/cni/net.d/10-flannel.conflist
+                    command:
+                      - cp
+                    image: {{ registry_url }}/flannel:v0.27.4
+                    name: install-cni
+                    volumeMounts:
+                      - mountPath: /etc/cni/net.d
+                        name: cni
+                      - mountPath: /etc/kube-flannel/
+                        name: flannel-cfg
+                priorityClassName: system-node-critical
+                serviceAccountName: flannel
+                tolerations:
+                  - effect: NoSchedule
+                    operator: Exists
+                volumes:
+                  - hostPath:
+                      path: /run/flannel
+                    name: run
+                  - hostPath:
+                      path: /opt/cni/bin
+                    name: cni-plugin
+                  - hostPath:
+                      path: /etc/cni/net.d
+                    name: cni
+                  - configMap:
+                      name: kube-flannel-cfg
+                    name: flannel-cfg
+                  - hostPath:
+                      path: /run/xtables.lock
+                      type: FileOrCreate
+                    name: xtables-lock
+        dest: /tmp/flannel.yaml
+        owner: root
+        group: root
+        mode: '0644'
+      when: inventory_hostname == "master-node-1"
+
+    - name: Применение манифеста Flannel
+      command: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f /tmp/flannel.yaml
+      register: flannel_apply
+      changed_when: flannel_apply.rc == 0
+      when: inventory_hostname == "master-node-1"
+
+    - name: Ожидание запуска подов Flannel
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-flannel -l app=flannel --no-headers
+      register: flannel_pods
+      until: flannel_pods.stdout != ""
+      retries: 30
+      delay: 10
+      when: inventory_hostname == "master-node-1"
+
+    - name: Проверка статуса Flannel подов
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get pods -n kube-flannel -o wide
+      register: flannel_status
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение статуса Flannel
+      debug:
+        var: flannel_status.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Попытка снятия taint с control-plane узлов
+  command: |
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf taint nodes --all node-role.kubernetes.io/control-plane- --overwrite
+  register: taint_result
+  failed_when: false
+  changed_when: false
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение результата taint
+  debug:
+    msg: "Taint result: {{ taint_result.stdout }}{{ taint_result.stderr }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Создание чистого kubeadm-config через шаблон
+  template:
+    src: kubeadm-config-mini.yaml.j2
+    dest: "/home/{{ k8s_user }}/kubeadm-config-clean.yaml"
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0644
+  when: inventory_hostname == "master-node-1"
+
+- name: Проверка созданного чистого конфига
+  shell: |
+    cat /home/{{ k8s_user }}/kubeadm-config-clean.yaml
+  register: clean_config_check
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение чистого конфига
+  debug:
+    var: clean_config_check.stdout
+  when: inventory_hostname == "master-node-1"
+
+- name: Принудительное создание cluster-info kubeadm
+  command: |
+    kubeadm init phase bootstrap-token --kubeconfig=/etc/kubernetes/admin.conf
+  when: inventory_hostname == "master-node-1"
+
+- name: Создание недостающих RBAC правил для bootstrap токенов
+  block:
+    - name: Создание ClusterRole для чтения cluster-info
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: cluster-info-reader
+        rules:
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          resourceNames: ["cluster-info"]
+          verbs: ["get"]
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для system:unauthenticated
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: system:unauthenticated-cluster-info
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-info-reader
+        subjects:
+        - kind: Group
+          name: system:unauthenticated
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для system:authenticated
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: system:authenticated-cluster-info
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-info-reader
+        subjects:
+        - kind: Group
+          name: system:authenticated
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для bootstrap tokens
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kubeadm:bootstrap-signer-clusterinfo
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-info-reader
+        subjects:
+        - kind: Group
+          name: system:bootstrappers:kubeadm:default-node-token
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRole для чтения kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: kubeadm-config-reader
+        rules:
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          resourceNames: ["kubeadm-config"]
+          verbs: ["get"]
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для чтения kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kubeadm-config-reader
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: kubeadm-config-reader
+        subjects:
+        - kind: Group
+          name: system:bootstrappers:kubeadm:default-node-token
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Проверка создания RBAC правил
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get clusterrole,clusterrolebinding | grep -E "(cluster-info-reader|kubeadm-config-reader)"
+      register: rbac_check
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение статуса RBAC
+      debug:
+        var: rbac_check.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Настройка RBAC для разрешения анонимного доступа к cluster-info
+  block:
+    - name: Создание ClusterRole для чтения cluster-info
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: cluster-info-reader
+        rules:
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          resourceNames: ["cluster-info"]
+          verbs: ["get"]
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для анонимного доступа
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kubeadm-node-clusterinfo
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-info-reader
+        subjects:
+        - kind: Group
+          name: system:unauthenticated
+        - kind: Group
+          name: system:authenticated
+        EOF
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Проверка доступа к cluster-info
+  command: |
+    kubectl --kubeconfig=/etc/kubernetes/admin.conf get configmap cluster-info -n kube-public
+  when: inventory_hostname == "master-node-1"
+
+- name: Получение команды join для control-plane
+  command: kubeadm token create --print-join-command
+  register: join_command
+  changed_when: false
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение полученной join команды
+  debug:
+    var: join_command.stdout
+  when: inventory_hostname == "master-node-1"
+
+- name: Получение certificate key с sudo
+  shell: kubeadm init phase upload-certs --upload-certs
+  register: cert_key
+  changed_when: false
+  become: true
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение сырого вывода certificate key
+  debug:
+    var: cert_key.stdout
+  when: inventory_hostname == "master-node-1"
+
+- name: Извлечение certificate key (исправленная версия)
+  set_fact:
+    certificate_key: "{{ cert_key.stdout | regex_search('[a-f0-9]{64}') | first | trim }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Проверка длины и значения certificate key
+  debug:
+    msg: "Certificate key: '{{ certificate_key }}', Length: {{ certificate_key | length }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Альтернативный способ извлечения (более надежный)
+  set_fact:
+    certificate_key: "{{ cert_key.stdout_lines | select('match', '[a-f0-9]{64}') | first | default('') | trim }}"
+  when:
+    - inventory_hostname == "master-node-1"
+    - certificate_key | length != 64
+
+- name: Проверка после альтернативного извлечения
+  debug:
+    msg: "Certificate key after alternative: '{{ certificate_key }}', Length: {{ certificate_key | length }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение извлеченного certificate key
+  debug:
+    var: certificate_key
+  when: inventory_hostname == "master-node-1"
+
+- name: Извлечение token из join команды
+  set_fact:
+    join_token: "{{ join_command.stdout | regex_search('--token [^ ]+') | regex_replace('--token ') }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Извлечение discovery-token-ca-cert-hash из join команды
+  set_fact:
+    join_ca_cert_hash: "{{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash [^ ]+') | regex_replace('--discovery-token-ca-cert-hash ') }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Отображение извлеченных значений для шаблона
+  debug:
+    msg: |
+      Token для шаблона: {{ join_token }}
+      CA Cert Hash для шаблона: {{ join_ca_cert_hash }}
+      Certificate Key для шаблона: {{ certificate_key }}
+  when: inventory_hostname == "master-node-1"
+
+- name: Сохранение команд join в переменные
+  set_fact:
+    control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout | regex_search('--token [^ ]+') | regex_replace('--token ') }} --discovery-token-ca-cert-hash {{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash [^ ]+') | regex_replace('--discovery-token-ca-cert-hash ') }} --control-plane --certificate-key {{ certificate_key }}"
+    worker_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_command.stdout | regex_search('--token [^ ]+') | regex_replace('--token ') }} --discovery-token-ca-cert-hash {{ join_command.stdout | regex_search('--discovery-token-ca-cert-hash [^ ]+') | regex_replace('--discovery-token-ca-cert-hash ') }}"
+  when: inventory_hostname == "master-node-1"
+
+- name: Создание конфигураций для присоединения мастер-узлов
+  template:
+    src: kubeadm-join-master.yaml.j2
+    dest: "/home/{{ k8s_user }}/kubeadm-join-{{ inventory_hostname }}.yaml"
+    owner: "{{ k8s_user }}"
+    group: "{{ k8s_group }}"
+    mode: 0644
+  when: inventory_hostname != "master-node-1"
+
+- name: Создание правильного kubeadm-config ConfigMap из шаблона
+  block:
+    - name: Удаление существующего kubeadm-config ConfigMap
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf delete cm kubeadm-config -n kube-system --ignore-not-found=true
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание kubeadm-config ConfigMap из чистого шаблона
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf create configmap kubeadm-config \
+          --namespace kube-system \
+          --from-file=ClusterConfiguration=/home/{{ k8s_user }}/kubeadm-config-clean.yaml
+      when: inventory_hostname == "master-node-1"
+
+    - name: Проверка созданного kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubeadm-config -n kube-system -o jsonpath='{.data.ClusterConfiguration}' | grep -E "(apiVersion|kind:)"
+      register: kubeadm_config_verify
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение структуры kubeadm-config
+      debug:
+        var: kubeadm_config_verify.stdout
+      when: inventory_hostname == "master-node-1"
+
+    - name: Полная проверка kubeadm-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubeadm-config -n kube-system -o yaml
+      register: kubeadm_config_full
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение полного содержимого kubeadm-config
+      debug:
+        var: kubeadm_config_full.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Создание kubelet-config ConfigMap
+  block:
+    - name: Проверка существования kubelet-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubelet-config -n kube-system
+      register: kubelet_config_check
+      failed_when: false
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание kubelet-config ConfigMap
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: kubelet-config
+          namespace: kube-system
+        data:
+          kubelet: |
+            apiVersion: kubelet.config.k8s.io/v1beta1
+            kind: KubeletConfiguration
+            cgroupDriver: systemd
+            clusterDomain: cluster.local
+            clusterDNS:
+            - 10.96.0.10
+            staticPodPath: /etc/kubernetes/manifests
+            failSwapOn: false
+        EOF
+      when:
+        - inventory_hostname == "master-node-1"
+        - kubelet_config_check.rc != 0
+
+    - name: Проверка создания kubelet-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm kubelet-config -n kube-system -o yaml
+      register: kubelet_config_verify
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение статуса kubelet-config
+      debug:
+        var: kubelet_config_verify.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Настройка RBAC для доступа к kubelet-config
+  block:
+    - name: Создание ClusterRole для чтения kubelet-config
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: kubelet-config-reader
+        rules:
+        - apiGroups: [""]
+          resources: ["configmaps"]
+          resourceNames: ["kubelet-config"]
+          verbs: ["get"]
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание ClusterRoleBinding для bootstrap токенов
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: kubeadm:kubelet-config
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: kubelet-config-reader
+        subjects:
+        - kind: Group
+          name: system:bootstrappers:kubeadm:default-node-token
+        EOF
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Создание правильного cluster-info ConfigMap
+  block:
+    - name: Получение CA сертификата в base64
+      shell: |
+        cat /etc/kubernetes/pki/ca.crt | base64 -w0
+      register: ca_cert_base64
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание cluster-info ConfigMap с правильным kubeconfig
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf apply -f - << 'EOF'
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: cluster-info
+          namespace: kube-public
+        data:
+          kubeconfig: |
+            apiVersion: v1
+            clusters:
+            - cluster:
+                certificate-authority-data: {{ ca_cert_base64.stdout }}
+                server: https://{{ cluster_vip }}:6443
+              name: ""
+            contexts: null
+            current-context: ""
+            kind: Config
+            preferences: {}
+            users: null
+        EOF
+      when: inventory_hostname == "master-node-1"
+
+    - name: Проверка создания cluster-info
+      shell: |
+        kubectl --kubeconfig=/etc/kubernetes/admin.conf get cm cluster-info -n kube-public -o yaml
+      register: cluster_info_check
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение содержимого cluster-info
+      debug:
+        var: cluster_info_check.stdout
+      when: inventory_hostname == "master-node-1"
+  when: inventory_hostname == "master-node-1"
+
+- name: Присоединение других мастер-узлов через конфиг файл
+  command: |
+    kubeadm join --config /home/{{ k8s_user }}/kubeadm-join-{{ inventory_hostname }}.yaml
+  when: inventory_hostname != "master-node-1"
+
+- name: Настройка kubectl на других мастерах
+  block:
+    - name: Копирование конфигурации с первого мастера
+      slurp:
+        src: "{{ k8s_home }}/.kube/config"
+      register: kubeconfig
+      delegate_to: master-node-1
+
+    - name: Запись конфигурации на текущий узел
+      copy:
+        content: "{{ kubeconfig.content | b64decode }}"
+        dest: "{{ k8s_home }}/.kube/config"
+        owner: "{{ k8s_user }}"
+        group: "{{ k8s_group }}"
+        mode: 0600
+  when:
+    - inventory_hostname != "master-node-1"
+    - inventory_hostname in groups['masters']

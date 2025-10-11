@@ -18,6 +18,7 @@ ansible-playbook -i inventory/hosts.yml site.yml -e '{
   "in_ip_3": "10.0.3.105",
   "host_registry": "89.208.208.139",
   "skip_bundle_transfer": true,
-  "need_restart": false
+  "need_restart": false,
+  "need_k8s_prepare": false
 }' --tags etcd
 

@@ -70,6 +70,7 @@
       register: containerd_check
       changed_when: false
       failed_when: containerd_check.rc != 0
+  when: need_k8s_prepare | default(true) | bool
 
 - name: Установка и настройка crictl
   block:
@@ -100,6 +101,7 @@
       command: crictl --version
       register: crictl_result
       changed_when: false
+  when: need_k8s_prepare | default(true) | bool
 
 - name: Обновление apt cache
   shell: apt-get update
@@ -118,6 +120,7 @@
       python3-module-kubernetes-client \
       kube-vip
   become: yes
+  when: need_k8s_prepare | default(true) | bool
 
 - name: Очистка предыдущей установки Kubernetes
   block:
@@ -133,6 +136,7 @@
         crictl rmi -a || true
       become: yes
       ignore_errors: yes
+  when: need_k8s_prepare | default(true) | bool
 
 - name: Подготовка директорий на всех узлах
   block:
@@ -148,6 +152,7 @@
         - /etc/kubernetes/pki
         - /etc/kubernetes/pki/etcd
       become: yes
+  when: need_k8s_prepare | default(true) | bool
 
 - name: Создание конфигурации kubeadm для external etcd
   template:
@@ -254,7 +259,6 @@
   block:
     - name: Загрузка необходимых образов
       command: kubeadm config images pull --config /home/{{ k8s_user }}/kubeadm-config.yaml
-      when: inventory_hostname == "master-node-1"
 
     - name: Полное удаление manifests директории со всем содержимым
       file:
@@ -271,6 +275,11 @@
         mode: '0755'
       become: yes
 
+    - name: Иницализация конфига kubelet
+      command: kubeadm init phase kubeconfig kubelet --config /home/{{ k8s_user }}/kubeadm-config.yaml
+      when: inventory_hostname == "master-node-1"
+      become: yes
+
     - name: Создание systemd сервиса для kubelet
       copy:
         content: |
@@ -284,6 +293,7 @@
           [Service]
           ExecStart=/usr/bin/kubelet \
             --config=/var/lib/kubelet/config.yaml \
+            --kubeconfig=/etc/kubernetes/kubelet.conf \
             --container-runtime-endpoint=unix:///var/run/containerd/containerd.sock \
             --pod-infra-container-image={{ registry_url }}/pause:3.9 \
             --fail-swap-on=false \
@@ -295,37 +305,6 @@
           [Install]
           WantedBy=multi-user.target
         dest: /lib/systemd/system/kubelet.service
-        owner: root
-        group: root
-        mode: '0644'
-      become: yes
-
-    - name: Удаление старой конфигурации kubelet
-      file:
-        path: /var/lib/kubelet/config.yaml
-        state: absent
-      become: yes
-      ignore_errors: yes
-
-    - name: Создание конфигурации kubelet
-      copy:
-        content: |
-          apiVersion: kubelet.config.k8s.io/v1beta1
-          kind: KubeletConfiguration
-          cgroupDriver: systemd
-          clusterDomain: cluster.local
-          clusterDNS:
-          - 10.96.0.10
-          staticPodPath: /etc/kubernetes/manifests
-          failSwapOn: false
-          authentication:
-            anonymous:
-              enabled: true
-          authorization:
-            mode: AlwaysAllow
-          rotateCertificates: true
-          clusterDomain: cluster.local
-        dest: /var/lib/kubelet/config.yaml
         owner: root
         group: root
         mode: '0644'
@@ -358,15 +337,6 @@
     - name: Отображение финального статуса kubelet
       debug:
         var: kubelet_final_status.stdout
-
-    - name: Проверка здоровья Kubernetes API
-      shell: |
-        curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1:6443/healthz
-      register: api_health_check
-      failed_when: api_health_check.stdout != "200"
-      retries: 30
-      delay: 10
-      when: inventory_hostname == "master-node-1"
 
     - name: Отображение статуса проверки API
       debug:

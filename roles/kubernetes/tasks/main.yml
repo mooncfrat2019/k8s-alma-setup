@@ -206,7 +206,6 @@
       unarchive:
         src: "{{ playbook_dir }}/k8s_certs.tar.gz"
         dest: /etc/kubernetes/pki
-        remote_src: yes
         owner: root
         group: root
       become: yes

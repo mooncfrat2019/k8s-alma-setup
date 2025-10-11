@@ -40,9 +40,9 @@ DNS.5 = localhost
 DNS.6 = master-node-1
 DNS.7 = master-node-2
 DNS.8 = master-node-3
-DNS.9 = ectd-master-node-1
-DNS.10 = ectd-master-node-2
-DNS.11 = ectd-master-node-3
+DNS.9 = etcd-master-node-1
+DNS.10 = etcd-master-node-2
+DNS.11 = etcd-master-node-3
 DNS.12 = k8s-etcd-cluster
 DNS.13 = kubernetes.default.svc.cluster.k8s-ha.local
 IP.1 = 127.0.0.1
@@ -50,11 +50,8 @@ IP.2 = ::1
 IP.3 = {{ host_1 }}
 IP.4 = {{ host_2 }}
 IP.5 = {{ host_3 }}
-IP.6 = {{ in_ip_1 }}
-IP.7 = {{ in_ip_2 }}
-IP.8 = {{ in_ip_3 }}
 {% for master in groups['masters'] %}
-IP.{{ 9 + loop.index0 }} = {{ hostvars[master]['internal_ip'] }}  # ← ВНУТРЕННИЕ IP ВСЕХ узлов
+IP.{{ 6 + loop.index0 }} = {{ hostvars[master]['internal_ip'] }}  # ← ВНУТРЕННИЕ IP ВСЕХ узлов
 {% endfor %}
 EOF
 
@@ -100,9 +97,9 @@ DNS.5 = localhost
 DNS.6 = master-node-1
 DNS.7 = master-node-2
 DNS.8 = master-node-3
-DNS.9 = ectd-master-node-1
-DNS.10 = ectd-master-node-2
-DNS.11 = ectd-master-node-3
+DNS.9 = etcd-master-node-1
+DNS.10 = etcd-master-node-2
+DNS.11 = etcd-master-node-3
 DNS.12 = k8s-etcd-cluster
 DNS.13 = kubernetes.default.svc.cluster.k8s-ha.local
 IP.1 = 127.0.0.1
@@ -110,11 +107,8 @@ IP.2 = ::1
 IP.3 = {{ host_1 }}
 IP.4 = {{ host_2 }}
 IP.5 = {{ host_3 }}
-IP.6 = {{ in_ip_1 }}
-IP.7 = {{ in_ip_2 }}
-IP.8 = {{ in_ip_3 }}
 {% for master in groups['masters'] %}
-IP.{{ 9 + loop.index0 }} = {{ hostvars[master]['internal_ip'] }}  # ← ВНУТРЕННИЕ IP ВСЕХ узлов
+IP.{{ 6 + loop.index0 }} = {{ hostvars[master]['internal_ip'] }}  # ← ВНУТРЕННИЕ IP ВСЕХ узлов
 {% endfor %}
 EOF
 

@@ -256,6 +256,15 @@
       command: kubeadm config images pull --config /home/{{ k8s_user }}/kubeadm-config.yaml
       when: inventory_hostname == "master-node-1"
 
+    - name: Пересоздание manifest директории
+      file:
+        path: /etc/kubernetes/manifests/
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: yes
+
     - name: Инициализация кластера с external etcd
       command: |
         kubeadm init --config /home/{{ k8s_user }}/kubeadm-config.yaml --upload-certs -v=5
@@ -380,7 +389,7 @@
       shell: |
         ETCDCTL_API=3 etcdctl \
           --endpoints=https://{{ hostvars['master-node-1'].internal_ip }}:2379,https://{{ hostvars['master-node-2'].internal_ip }}:2379,https://{{ hostvars['master-node-3'].internal_ip }}:2379 \
-          --cacert=/etc/kubernetes/pki/etcd/etcd-ca.crt \
+          --cacert=/etc/kubernetes/pki/etcd-ca.crt \
           --cert=/etc/kubernetes/pki/apiserver-etcd-client.crt \
           --key=/etc/kubernetes/pki/apiserver-etcd-client.key \
           endpoint health

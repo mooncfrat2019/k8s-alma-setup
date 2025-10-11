@@ -22,7 +22,7 @@ etcd:
       - https://{{ hostvars['master-node-1'].internal_ip }}:2379
       - https://{{ hostvars['master-node-2'].internal_ip }}:2379
       - https://{{ hostvars['master-node-3'].internal_ip }}:2379
-    caFile: /etc/kubernetes/pki/etcd/etcd-ca.crt
+    caFile: /etc/kubernetes/pki/etcd-ca.crt
     certFile: /etc/kubernetes/pki/apiserver-etcd-client.crt
     keyFile: /etc/kubernetes/pki/apiserver-etcd-client.key
 imageRepository: "{{ registry_url }}"

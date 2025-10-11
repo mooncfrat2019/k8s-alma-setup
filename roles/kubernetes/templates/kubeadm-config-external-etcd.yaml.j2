@@ -22,10 +22,22 @@ networking:
 apiServer:
   certSANs:
     - "{{ cluster_vip }}"
+    - "{{ hostvars['master-node-1'].node_ip }}"
+    - "{{ hostvars['master-node-2'].node_ip }}"
+    - "{{ hostvars['master-node-3'].node_ip }}"
+    - "{{ hostvars['master-node-1'].internal_ip }}"
+    - "{{ hostvars['master-node-2'].internal_ip }}"
+    - "{{ hostvars['master-node-3'].internal_ip }}"
+    - "kubernetes"
+    - "kubernetes.default"
+    - "kubernetes.default.svc"
     - "kubernetes.default.svc.{{ cluster_domain }}"
     - "{{ cluster_domain }}"
     - "127.0.0.1"
     - "localhost"
+    - "master-node-1"
+    - "master-node-2"
+    - "master-node-3"
 {% for ip in master_ips.values() %}
     - "{{ ip }}"
 {% endfor %}

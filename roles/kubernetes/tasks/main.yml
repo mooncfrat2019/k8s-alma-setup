@@ -317,6 +317,12 @@
       become: yes
       when: inventory_hostname == "master-node-1"
 
+    - name: Stop kubelet service
+      become: yes
+      systemd:
+        name: kubelet
+        state: stopped
+
     - name: Инициализация кластера с external etcd
       command: |
         kubeadm init --config /home/{{ k8s_user }}/kubeadm-config.yaml --upload-certs -v=5

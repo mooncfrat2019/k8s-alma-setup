@@ -20,5 +20,5 @@ ansible-playbook -i inventory/hosts.yml site.yml -e '{
   "skip_bundle_transfer": true,
   "need_restart": false,
   "need_k8s_prepare": false
-}' --tags etcd
+}' --tags kubernetes
 

@@ -412,43 +412,59 @@
         var: kubeadm_init.stdout
       when: inventory_hostname == "master-node-1"
 
-    - name: Извлечение join команд (упрощенный способ)
+    - name: Извлечение join команд (исправленная версия)
       block:
-        - name: Найти все строки с join командой
+        - name: Поиск строки с control-plane join командой в stdout
           set_fact:
-            all_join_lines: "{{ kubeadm_init.stdout | regex_findall('kubeadm join[^}]+') }}"
+            join_command_found: "{{ kubeadm_init.stdout | regex_search('kubeadm join.*--control-plane.*(--certificate-key|$)') }}"
           when: inventory_hostname == "master-node-1"
 
-        - name: Найти control-plane команду
+        - name: Если не нашли в stdout, ищем в stdout_lines
           set_fact:
-            control_plane_command: "{{ all_join_lines | select('match', '--control-plane') | first | replace('\\n', ' ') | replace('\\', '') | trim }}"
+            join_command_found: "{{ kubeadm_init.stdout_lines | join(' ') | regex_search('kubeadm join.*--control-plane.*(--certificate-key|$)') }}"
+          when:
+            - inventory_hostname == "master-node-1"
+            - not join_command_found
+
+        - name: Отображение найденной команды
+          debug:
+            var: join_command_found
           when: inventory_hostname == "master-node-1"
 
-        - name: Извлечение компонентов из команды
+        - name: Извлечение certificate key отдельно
           set_fact:
-            certificate_key: "{{ kubeadm_init.stdout | regex_search('certificate key:[\\s]*([a-f0-9]{64})') | regex_replace('.*certificate key:[\\s]*([a-f0-9]{64}).*', '\\\\1') }}"
-            join_token: "{{ control_plane_command | regex_search('--token\\s+([a-z0-9]{6}\\.[a-z0-9]{16})') | regex_replace('.*--token\\s+([a-z0-9]{6}\\.[a-z0-9]{16}).*', '\\\\1') }}"
-            ca_cert_hash: "{{ control_plane_command | regex_search('--discovery-token-ca-cert-hash\\s+(sha256:[a-f0-9]{64})') | regex_replace('.*--discovery-token-ca-cert-hash\\s+(sha256:[a-f0-9]{64}).*', '\\\\1') }}"
+            certificate_key: "{{ kubeadm_init.stdout | regex_search('(?<=certificate-key )[a-f0-9]{64}') | first }}"
           when: inventory_hostname == "master-node-1"
 
-    - name: Проверка извлеченных данных
-      debug:
-        msg: |
-          Certificate Key: {{ certificate_key }}
-          Join Token: {{ join_token }}
-          CA Cert Hash: {{ ca_cert_hash }}
-      when: inventory_hostname == "master-node-1"
+        - name: Извлечение токена
+          set_fact:
+            join_token: "{{ kubeadm_init.stdout | regex_search('(?<=--token )[a-z0-9]{6}\\.[a-z0-9]{16}') | first }}"
+          when: inventory_hostname == "master-node-1"
 
-    - name: Создание control plane join команды
-      set_fact:
-        control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_token }} --discovery-token-ca-cert-hash {{ ca_cert_hash }} --control-plane --certificate-key {{ certificate_key }}"
-      when: inventory_hostname == "master-node-1"
+        - name: Извлечение CA cert hash
+          set_fact:
+            ca_cert_hash: "{{ kubeadm_init.stdout | regex_search('(?<=--discovery-token-ca-cert-hash )sha256:[a-f0-9]{64}') | first }}"
+          when: inventory_hostname == "master-node-1"
 
-    - name: Отображение итоговой join команды
-      debug:
-        msg: |
-          === CONTROL PLANE JOIN COMMAND ===
-          {{ control_plane_join_command }}
+        - name: Проверка извлеченных значений
+          debug:
+            msg: |
+              Certificate Key: {{ certificate_key }} (length: {{ certificate_key | length }})
+              Join Token: {{ join_token }} (length: {{ join_token | length }})
+              CA Cert Hash: {{ ca_cert_hash }} (length: {{ ca_cert_hash | length }})
+          when: inventory_hostname == "master-node-1"
+
+        - name: Создание control plane join команды
+          set_fact:
+            control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_token }} --discovery-token-ca-cert-hash {{ ca_cert_hash }} --control-plane --certificate-key {{ certificate_key }}"
+          when: inventory_hostname == "master-node-1"
+
+        - name: Отображение итоговой join команды
+          debug:
+            msg: |
+              === FINAL CONTROL PLANE JOIN COMMAND ===
+              {{ control_plane_join_command }}
+          when: inventory_hostname == "master-node-1"
       when: inventory_hostname == "master-node-1"
 
     - name: Настройка kubectl для пользователя

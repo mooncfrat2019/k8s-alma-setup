@@ -317,33 +317,6 @@
       become: yes
       when: inventory_hostname == "master-node-1"
 
-    - name: Перезапуск kubelet
-      systemd:
-        name: kubelet
-        state: restarted
-        enabled: yes
-      become: yes
-      when: inventory_hostname == "master-node-1"
-
-    - name: Ожидание запуска kubelet
-      systemd:
-        name: kubelet
-        state: started
-      become: yes
-      when: inventory_hostname == "master-node-1"
-
-    - name: Проверка статуса kubelet
-      shell: |
-        systemctl status kubelet --no-pager -l
-      register: kubelet_final_status
-      become: yes
-      when: inventory_hostname == "master-node-1"
-
-    - name: Отображение финального статуса kubelet
-      debug:
-        var: kubelet_final_status.stdout
-      when: inventory_hostname == "master-node-1"
-
     - name: Инициализация кластера с external etcd
       command: |
         kubeadm init --config /home/{{ k8s_user }}/kubeadm-config.yaml --upload-certs -v=5

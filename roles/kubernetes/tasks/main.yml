@@ -161,7 +161,6 @@
     owner: "{{ k8s_user }}"
     group: "{{ k8s_group }}"
     mode: 0644
-  when: inventory_hostname == "master-node-1"
 
 - name: Генерация сертификатов Kubernetes на master-node-1
   block:
@@ -310,11 +309,13 @@
         group: root
         mode: '0644'
       become: yes
+      when: inventory_hostname == "master-node-1"
 
     - name: Перезагрузка демона systemd
       systemd:
         daemon_reload: yes
       become: yes
+      when: inventory_hostname == "master-node-1"
 
     - name: Перезапуск kubelet
       systemd:
@@ -322,26 +323,25 @@
         state: restarted
         enabled: yes
       become: yes
+      when: inventory_hostname == "master-node-1"
 
     - name: Ожидание запуска kubelet
       systemd:
         name: kubelet
         state: started
       become: yes
+      when: inventory_hostname == "master-node-1"
 
     - name: Проверка статуса kubelet
       shell: |
         systemctl status kubelet --no-pager -l
       register: kubelet_final_status
       become: yes
+      when: inventory_hostname == "master-node-1"
 
     - name: Отображение финального статуса kubelet
       debug:
         var: kubelet_final_status.stdout
-
-    - name: Отображение статуса проверки API
-      debug:
-        msg: "Kubernetes API health check: {{ api_health_check.stdout }}"
       when: inventory_hostname == "master-node-1"
 
     - name: Инициализация кластера с external etcd
@@ -392,9 +392,13 @@
 
 - name: Ожидание готовности первого control-plane узла
   block:
-    - name: Ожидание запуска API server
+    - name: Проверка здоровья Kubernetes API
       shell: |
-        timeout 120 bash -c 'until curl -k https://127.0.0.1:6443/healthz &>/dev/null; do sleep 5; done'
+        curl -k -s -o /dev/null -w "%{http_code}" https://127.0.0.1:6443/healthz
+      register: api_health_check
+      failed_when: api_health_check.stdout != "200"
+      retries: 30
+      delay: 10
       when: inventory_hostname == "master-node-1"
 
     - name: Проверка компонентов control plane

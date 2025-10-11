@@ -190,9 +190,9 @@
         src: /tmp/k8s_certs.tar.gz
         dest: "{{ playbook_dir }}/k8s_certs.tar.gz"
         flat: yes
-      delegate_to: master-node-1
       become: yes
       run_once: true
+      when: inventory_hostname == "master-node-1"
 
     - name: Очистка архива на master-node-1
       file:

@@ -334,19 +334,34 @@
         var: kubeadm_init.stdout
       when: inventory_hostname == "master-node-1"
 
-    - name: Извлечение join команд
+    - name: Извлечение данных для join
       set_fact:
+        # Извлекаем certificate key (64 символа hex)
         certificate_key: "{{ kubeadm_init.stdout | regex_search('[a-f0-9]{64}') | first }}"
-        control_plane_join_command: "{{ kubeadm_init.stdout_lines | select('match', 'kubeadm join.*--control-plane') | first | trim }}"
-        worker_join_command: "{{ kubeadm_init.stdout_lines | select('match', 'kubeadm join.*--control-plane') | list | length == 0 | ternary(kubeadm_init.stdout_lines[-1], kubeadm_init.stdout_lines[-2]) | trim }}"
+        # Извлекаем токен (формат xxxxx.xxxxx)
+        join_token: "{{ kubeadm_init.stdout | regex_search('[a-z0-9]{5}\\.[a-z0-9]{16}') | first }}"
+        # Извлекаем CA cert hash (sha256:...)
+        ca_cert_hash: "{{ kubeadm_init.stdout | regex_search('sha256:[a-f0-9]{64}') | first }}"
       when: inventory_hostname == "master-node-1"
 
-    - name: Отображение join команд
+    - name: Проверка извлеченных данных
       debug:
         msg: |
-          Control Plane Join: {{ control_plane_join_command }}
-          Worker Join: {{ worker_join_command }}
           Certificate Key: {{ certificate_key }}
+          Join Token: {{ join_token }}
+          CA Cert Hash: {{ ca_cert_hash }}
+      when: inventory_hostname == "master-node-1"
+
+    - name: Создание control plane join команды
+      set_fact:
+        control_plane_join_command: "kubeadm join {{ cluster_vip }}:6443 --token {{ join_token }} --discovery-token-ca-cert-hash {{ ca_cert_hash }} --control-plane --certificate-key {{ certificate_key }}"
+      when: inventory_hostname == "master-node-1"
+
+    - name: Отображение итоговой join команды
+      debug:
+        msg: |
+          === CONTROL PLANE JOIN COMMAND ===
+          {{ control_plane_join_command }}
       when: inventory_hostname == "master-node-1"
 
     - name: Настройка kubectl для пользователя
@@ -456,6 +471,7 @@
           --key=/etc/kubernetes/pki/apiserver-etcd-client.key \
           endpoint health
       register: etcd_health
+      ignore_errors: yes
       when: inventory_hostname == "master-node-1"
 
     - name: Отображение статуса etcd

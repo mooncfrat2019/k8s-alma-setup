@@ -17,6 +17,7 @@ ansible-playbook -i inventory/hosts.yml site.yml -e '{
   "in_ip_2": "10.0.3.248",
   "in_ip_3": "10.0.3.105",
   "host_registry": "89.208.208.139",
+  "pod_network_cidr": "10.244.0.0/16",
   "skip_bundle_transfer": true,
   "need_restart": false,
   "need_k8s_prepare": false

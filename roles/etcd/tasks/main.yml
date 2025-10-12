@@ -233,6 +233,11 @@
     enabled: yes
     daemon_reload: yes
 
+- name: Restart etcd
+  systemd:
+    name: etcd
+    state: restarted
+
 - name: Wait for etcd to be ready
   wait_for:
     host: "{{ hostvars[inventory_hostname]['node_ip'] }}"

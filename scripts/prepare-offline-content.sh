@@ -7,7 +7,7 @@ echo "=== Preparing Complete Offline Content for Kubernetes ==="
 DOWNLOAD_DIR="./files"
 PACKAGES_DIR="$DOWNLOAD_DIR/packages"
 IMAGES_DIR="$DOWNLOAD_DIR/images"
-
+REGISTRY="${1:-localhost:5000}"
 # Создаем директории
 mkdir -p $PACKAGES_DIR
 mkdir -p $IMAGES_DIR
@@ -15,7 +15,7 @@ mkdir -p $IMAGES_DIR
 # Загружаем образы
 echo ""
 echo "=== DOWNLOADING DOCKER IMAGES ==="
-./scripts/download-images.sh
+./scripts/download-images.sh ${REGISTRY}
 IMAGE_COUNT=$(find $IMAGES_DIR -name "*.tar" 2>/dev/null | wc -l || echo 0)
 echo "🐳 Images downloaded: $IMAGE_COUNT"
 

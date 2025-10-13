@@ -33,39 +33,6 @@
   register: offline_packages_dir
   ignore_errors: yes
 
-- name: Установка всех пакетов из офлайн-директории через apt-get
-  block:
-    - name: Поиск deb пакетов
-      find:
-        paths: "{{ k8s_home }}/k8s-offline/files/packages"
-        patterns: "*.deb"
-        recurse: no
-      register: deb_packages
-      when:
-        - offline_packages_dir is defined
-        - offline_packages_dir.stat is defined
-        - offline_packages_dir.stat.exists
-
-    - name: Показать количество найденных пакетов
-      debug:
-        msg: "Найдено deb пакетов: {{ deb_packages.files | length }}"
-      when: deb_packages.files | length > 0
-
-    - name: Установка локальных deb пакетов через apt-get
-      shell: |
-        cd "{{ k8s_home }}/k8s-offline/files/packages"
-        apt-get install -y ./*.deb
-      args:
-        executable: /bin/bash
-      when: deb_packages.files | length > 0
-      ignore_errors: yes
-      failed_when: false
-
-  when:
-    - offline_packages_dir is defined
-    - offline_packages_dir.stat is defined
-    - offline_packages_dir.stat.exists
-
 - name: Установка базовых пакетов из интернета
   block:
     - name: Установка обязательных пакетов
@@ -82,7 +49,6 @@
         - ntp
         - ntpdate
         - which
-        - sudo
       ignore_errors: yes
       register: package_install
       failed_when: false

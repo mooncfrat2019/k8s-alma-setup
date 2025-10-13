@@ -23,3 +23,19 @@ ansible-playbook -i inventory/hosts.yml site.yml -e '{
   "need_k8s_prepare": false
 }' --tags kubernetes
 
+
+ansible-playbook -i inventory/hosts.yml site.yml -e '{
+  "super_user": "altlinux",
+  "host_1": "89.208.223.4",
+  "host_2": "89.208.229.134",
+  "host_3": "212.111.86.144",
+  "in_ip_1": "10.0.3.155",
+  "in_ip_2": "10.0.3.104",
+  "in_ip_3": "10.0.3.64",
+  "host_registry": "217.16.23.176",
+  "pod_network_cidr": "10.244.0.0/16",
+  "cni_plugin": "cilium",
+  "skip_bundle_transfer": false,
+  "need_restart": true,
+  "need_k8s_prepare": true
+}' --tags transfer

@@ -12,13 +12,6 @@ IMAGES_DIR="$DOWNLOAD_DIR/images"
 mkdir -p $PACKAGES_DIR
 mkdir -p $IMAGES_DIR
 
-# Загружаем пакеты
-echo ""
-echo "=== DOWNLOADING PACKAGES ==="
-./scripts/download-packages.sh
-PACKAGE_COUNT=$(find $PACKAGES_DIR -name "*.deb" 2>/dev/null | wc -l || echo 0)
-echo "📦 Packages downloaded: $PACKAGE_COUNT"
-
 # Загружаем образы
 echo ""
 echo "=== DOWNLOADING DOCKER IMAGES ==="

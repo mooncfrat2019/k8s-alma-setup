@@ -11,8 +11,11 @@
           - host_1 is defined
           - host_2 is defined
           - host_3 is defined
+          - in_ip_1 is defined
+          - in_ip_2 is defined
+          - in_ip_3 is defined
           - host_registry is defined
-        msg: "Обязательные переменные super_user, host_1, host_2, host_3, host_registry должны быть определены"
+        msg: "Обязательные переменные super_user, host_1, host_2, host_3, host_registry, in_ip_1, in_ip_2, in_ip_3 должны быть определены"
       tags: always
 
 - name: Перенос и распаковка оффлайн бандла

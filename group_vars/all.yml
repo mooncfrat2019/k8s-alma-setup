@@ -9,27 +9,30 @@ k8s_group: "{{ k8s_user }}"
 k8s_home: "/home/{{ k8s_user }}"
 
 # Network configuration
-cluster_vip: "89.208.208.109"
+cluster_vip: "{{ hostvars['master-node-1'].node_ip }}"
 cluster_domain: "k8s-ha.local"
 pod_network_cidr: "10.244.0.0/16"
 service_cidr: "10.96.0.0/12"
 
 # Registry configuration
-registry_host: "89.208.208.139"
+registry_host: "{{ hostvars['registry-server'].node_ip }}"
 registry_port: "5000"
 registry_url: "{{ registry_host }}:{{ registry_port }}"
 
 # Kubernetes configuration
-kubernetes_version: "1.28.15"
+kubernetes_version: "{{ k8s_version | default('1.33.4') }}"
+kubernetes_version_short: "{{ k8s_version_short | default('1.33') }}"
 container_runtime: "containerd"
 cgroup_driver: "systemd"
 
+crictl_version: "1.33.0"
+
 # Node IPs
 master_ips:
-  master-node-1: "89.208.208.109"
-  master-node-2: "89.208.228.250"
-  master-node-3: "89.208.228.216"
-  registry-server: "89.208.208.139"
+  master-node-1: "{{ hostvars['master-node-1'].node_ip }}"
+  master-node-2: "{{ hostvars['master-node-2'].node_ip }}"
+  master-node-3: "{{ hostvars['master-node-3'].node_ip }}"
+  registry-server: "{{ hostvars['registry-server'].node_ip }}"
 
 # Package paths
 local_repo_path: "/var/www/html/k8s-repo"
@@ -38,27 +41,9 @@ packages_path: "{{ offline_files_path }}/packages"
 images_path: "{{ offline_files_path }}/images"
 
 # Calico configuration
-calico_version: "3.26.0"   # No changes needed
+calico_version: "3.27.2"
 calico_image_registry: "{{ registry_url }}"
 calico_mode: "vxlan"
-
-# Kubernetes images
-k8s_images:
-  - "k8s.gcr.io/kube-apiserver:v1.34.0"      # Updated
-  - "k8s.gcr.io/kube-controller-manager:v1.34.0" # Updated
-  - "k8s.gcr.io/kube-scheduler:v1.34.0"       # Updated
-  - "k8s.gcr.io/kube-proxy:v1.34.0"          # Updated
-  - "k8s.gcr.io/pause:3.9"                    # No change
-  - "k8s.gcr.io/etcd:3.5.9-0"                 # No change
-  - "k8s.gcr.io/coredns/coredns:v1.10.1"      # No change
-
-# Calico images
-calico_images:
-  - "docker.io/calico/node:v3.26.0"           # No change
-  - "docker.io/calico/cni:v3.26.0"            # No change
-  - "docker.io/calico/kube-controllers:v3.26.0" # No change
-  - "docker.io/calico/pod2daemon-flexvol:v3.26.0" # No change
-  - "docker.io/calico/typha:v3.26.0"          # No change
 
 # System configuration
 timezone: "Europe/Moscow"

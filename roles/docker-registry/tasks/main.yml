@@ -1,9 +1,47 @@
 ---
+- name: Обновление списка пакетов
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+  when: inventory_hostname == "registry-server"
+
+- name: Установка Docker
+  apt:
+    name: "{{ item }}"
+    state: present
+  loop:
+    docker-cli
+    docker-compose-v2
+    docker-engine
+    docker-engine-rootless
+    docker-proxy
+  ignore_errors: yes
+  when: inventory_hostname == "registry-server"
+
 - name: Запуск и включение Docker
   systemd:
     name: docker
     state: started
     enabled: yes
+  when: inventory_hostname == "registry-server"
+
+- name: Копирование образа regisrty на хост regisrty-server
+  copy:
+    src: "{{ playbook_dir }}/files/images/registry.tar.gz"
+    dest: "/tmp/registry.tar.gz"
+    mode: "0644"
+    owner: root
+    group: root
+  become: yes
+  when: inventory_hostname == "registry-server"
+
+- name: Загрузка образа registry в docker
+  shell: |
+    docker load -i /tmp/registry.tar.gz
+  args:
+    executable: /bin/bash
+  when: inventory_hostname == "registry-server"
+  become: yes
 
 - name: Настройка незащищенного registry в Docker
   copy:
@@ -13,29 +51,34 @@
       }
     dest: /etc/docker/daemon.json
     mode: 0644
+  when: inventory_hostname == "registry-server"
 
 - name: Перезагрузка Docker
   systemd:
     name: docker
     state: restarted
+  when: inventory_hostname == "registry-server"
 
 - name: Создание директории для registry
   file:
     path: /opt/docker-registry
     state: directory
     mode: 0755
+  when: inventory_hostname == "registry-server"
 
 - name: Создание директории для данных registry
   file:
     path: /opt/docker-registry/data
     state: directory
     mode: 0755
+  when: inventory_hostname == "registry-server"
 
 - name: Настройка Docker registry конфигурации
   template:
     src: registry-config.yml.j2
     dest: /opt/docker-registry/docker-compose.yml
     mode: 0644
+  when: inventory_hostname == "registry-server"
 
 - name: Остановка существующего registry контейнера
   shell: |
@@ -45,6 +88,7 @@
   args:
     executable: /bin/bash
   ignore_errors: yes
+  when: inventory_hostname == "registry-server"
 
 - name: Запуск Docker registry через docker-compose
   shell: |
@@ -54,6 +98,7 @@
     executable: /bin/bash
   register: compose_result
   failed_when: compose_result.rc != 0
+  when: inventory_hostname == "registry-server"
 
 - name: Ожидание запуска registry
   wait_for:
@@ -61,32 +106,38 @@
     port: "{{ registry_port }}"
     delay: 5
     timeout: 30
+  when: inventory_hostname == "registry-server"
 
 - name: Проверка что registry работает
   shell: |
     curl -s http://{{ registry_url }}/v2/_catalog
   register: registry_check
   changed_when: false
+  when: inventory_hostname == "registry-server"
 
 - name: Показать статус registry
   debug:
     msg: "Registry status: {{ registry_check.stdout }}"
+  when: inventory_hostname == "registry-server"
 
 - name: Проверка загруженных образов в Docker
   shell: |
     docker images
   register: docker_images
   changed_when: false
+  when: inventory_hostname == "registry-server"
 
 - name: Показать образы в Docker
   debug:
     msg: "Images in Docker: {{ docker_images.stdout }}"
+  when: inventory_hostname == "registry-server"
 
 - name: Создание скрипта для загрузки образов через шаблон
   template:
     src: push-images.sh.j2
     dest: /opt/docker-registry/push-images.sh
     mode: 0755
+  when: inventory_hostname == "registry-server"
 
 - name: Загрузка образов в локальный registry
   shell: |
@@ -96,17 +147,21 @@
     executable: /bin/bash
   register: push_result
   ignore_errors: yes
+  when: inventory_hostname == "registry-server"
 
 - name: Показать результат загрузки
   debug:
     msg: "Push script output: {{ push_result.stdout }}"
+  when: inventory_hostname == "registry-server"
 
 - name: Проверка загруженных образов в registry
   shell: |
     curl -s http://{{ registry_url }}/v2/_catalog
   register: registry_catalog
   changed_when: false
+  when: inventory_hostname == "registry-server"
 
 - name: Показать финальный результат
   debug:
     msg: "Final registry catalog: {{ registry_catalog.stdout }}"
+  when: inventory_hostname == "registry-server"

@@ -12,7 +12,7 @@
         - /opt/cni/bin
       become: yes
 
-    - name: Копирование и распаковка crictl
+    - name: Копирование и распаковка cni плагинов
       unarchive:
         src: "files/binares/cni-plugins-linux-amd64-v1.3.0.tgz"
         dest: /opt/cni/bin
@@ -56,10 +56,10 @@
               sandbox_image = "{{ registry_url }}/pause:3.9"
               [plugins."io.containerd.grpc.v1.cri".registry]
                 [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
-                  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."89.208.208.139:5000"]
-                    endpoint = ["http://89.208.208.139:5000"]
+                  [plugins."io.containerd.grpc.v1.cri".registry.mirrors."{{ registry_url }}"]
+                    endpoint = ["http://{{ registry_url }}"]
                 [plugins."io.containerd.grpc.v1.cri".registry.configs]
-                  [plugins."io.containerd.grpc.v1.cri".registry.configs."89.208.208.139:5000".tls]
+                  [plugins."io.containerd.grpc.v1.cri".registry.configs."{{ registry_url }}".tls]
                     insecure_skip_verify = true
               [plugins."io.containerd.grpc.v1.cri".containerd]
                 snapshotter = "overlayfs"
@@ -99,7 +99,7 @@
   block:
     - name: Копирование и распаковка crictl
       unarchive:
-        src: "files/binares/crictl-v1.28.0-linux-amd64.tar.gz"
+        src: "files/binares/crictl-v{{ crictl_version }}-linux-amd64.tar.gz"
         dest: /usr/bin
         owner: root
         group: root
@@ -133,13 +133,13 @@
 - name: Установка Kubernetes компонентов
   shell: |
     apt-get install -y \
-      kubernetes1.28-client \
-      kubernetes1.28-kubeadm \
-      kubernetes1.28-kubelet \
-      kubernetes1.28-master \
-      kubernetes1.28-node \
-      kubernetes1.28-common \
-      kubernetes1.28-crio \
+      kubernetes{{ kubernetes_version_short }}-client \
+      kubernetes{{ kubernetes_version_short }}-kubeadm \
+      kubernetes{{ kubernetes_version_short }}-kubelet \
+      kubernetes{{ kubernetes_version_short }}-master \
+      kubernetes{{ kubernetes_version_short }}-node \
+      kubernetes{{ kubernetes_version_short }}-common \
+      kubernetes{{ kubernetes_version_short }}-crio \
       python3-module-kubernetes-client \
       kube-vip
   become: yes
@@ -262,24 +262,6 @@
         var: k8s_domain_check.stdout
       when: inventory_hostname == "master-node-1"
   when: inventory_hostname == "master-node-1"
-
-#- name: Генерация сертификатов Kubernetes на master-node-1
-#  block:
-#    - name: Генерация сертификатов
-#      command: kubeadm init phase certs all --config /home/{{ k8s_user }}/kubeadm-config.yaml
-#      when: inventory_hostname == "master-node-1"
-#
-#    - name: Проверка сгенерированных сертификатов
-#      shell: |
-#        ls -la /etc/kubernetes/pki/
-#        ls -la /etc/kubernetes/pki/etcd/ || echo "No etcd certs"
-#      register: certs_check
-#      when: inventory_hostname == "master-node-1"
-#
-#    - name: Отображение проверки сертификатов
-#      debug:
-#        var: certs_check.stdout
-#      when: inventory_hostname == "master-node-1"
 
 - name: Копирование сертификатов через архив
   block:
@@ -568,6 +550,24 @@
       when: inventory_hostname == "master-node-1"
       retries: 30
       delay: 10
+  when: cni_plugin_value == 'flannel'
+
+- name: Установка CNI плагина cilium
+  block:
+    - name: Распаковка плагина cilium
+      unarchive:
+        src: "{{ playbook_dir }}/files/binares/cilium-linux-amd64.tar.gz"
+        dest: "/usr/bin"
+        remote_src: no
+        owner: root
+        group: root
+        mode: "0755"
+      when: inventory_hostname == "master-node-1"
+
+    - name: Установка плагина cilium
+      shell: cilium install
+      when: inventory_hostname == "master-node-1"
+  when: cni_plugin_value == 'cilium'
 
 - name: Присоединение остальных control-plane узлов
   block:

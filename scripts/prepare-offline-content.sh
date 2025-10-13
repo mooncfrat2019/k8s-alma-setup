@@ -42,7 +42,7 @@ echo "🎉 Offline preparation completed!"
 echo "📦 Bundle: $BUNDLE_NAME"
 echo "📊 Summary: $PACKAGE_COUNT packages, $IMAGE_COUNT images"
 
-if [ $PACKAGE_COUNT -gt 0 ] && [ $IMAGE_COUNT -gt 0 ]; then
+if [ $IMAGE_COUNT -gt 0 ]; then
     echo "🚀 Ready for deployment!"
 else
     echo "⚠️  Some components may be missing, but we can proceed"

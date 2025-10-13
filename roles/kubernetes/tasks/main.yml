@@ -1,4 +1,27 @@
 ---
+- name: Установка и настройка cni плагинов
+  block:
+    - name: Создание необходимых директорий под плагины
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /opt/cni/bin
+      become: yes
+
+    - name: Копирование и распаковка crictl
+      unarchive:
+        src: "files/binares/cni-plugins-linux-amd64-v1.3.0.tgz"
+        dest: /opt/cni/bin
+        owner: root
+        group: root
+        mode: '0755'
+        remote_src: no
+      become: yes
+
 - name: Установка и настройка containerd
   block:
     - name: Копирование rpm пакета containerd на сервер

@@ -584,7 +584,7 @@
 - name: Проверка состояния кластера
   block:
     - name: Проверка узлов
-      command: kubectl get nodes -o wide
+      command: kubectl --kubeconfig=/etc/kubernetes/admin.conf get nodes -o wide
       register: nodes_info
       when: inventory_hostname == "master-node-1"
 

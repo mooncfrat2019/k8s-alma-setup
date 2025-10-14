@@ -24,24 +24,17 @@
 
 - name: Установка и настройка containerd
   block:
-    - name: Копирование rpm пакета containerd на сервер
-      copy:
-        src: "files/packages/containerd-2.1.4-alt1.x86_64.rpm"
-        dest: /tmp/containerd.rpm
-        owner: root
-        group: root
-        mode: '0644'
-      become: yes
+    - name: Обновление списка пакетов
+      shell: |
+        apt-get update
+      when: inventory_hostname != "registry-server"
 
-    - name: Установка containerd через apt-get
-      shell: apt-get install -y /tmp/containerd.rpm
-      become: yes
-
-    - name: Очистка временного файла
-      file:
-        path: /tmp/containerd.rpm
-        state: absent
-      become: yes
+    - name: Установка containerd
+      shell: |
+        apt-get install -y \
+          containerd
+      ignore_errors: yes
+      when: inventory_hostname != "registry-server"
 
     - name: Создание базового конфига containerd
       copy:

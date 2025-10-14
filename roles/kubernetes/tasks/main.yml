@@ -80,12 +80,6 @@
         state: present
         timeout: 30
       become: yes
-
-    - name: Проверка работы containerd
-      command: crictl version
-      register: containerd_check
-      changed_when: false
-      failed_when: containerd_check.rc != 0
   when: need_k8s_prepare | default(true) | bool
 
 - name: Установка и настройка crictl

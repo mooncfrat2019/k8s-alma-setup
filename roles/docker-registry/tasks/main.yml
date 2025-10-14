@@ -15,6 +15,17 @@
   ignore_errors: yes
   when: inventory_hostname == "registry-server"
 
+- name: Копирование плагина docker-compose в /usr/bin
+  copy:
+    src: "/usr/lib/docker/cli-plugins/docker-compose"
+    dest: "/usr/bin/"
+    owner: root
+    group: root
+    mode: "755"
+    remote_src: yes
+  become: yes
+  when: inventory_hostname == "registry-server"
+
 - name: Запуск и включение Docker
   systemd:
     name: docker

@@ -7,8 +7,8 @@ nodeRegistration:
   criSocket: "unix:///var/run/containerd/containerd.sock"
   taints: []
   kubeletExtraArgs:
-    cgroup-driver: "{{ cgroup_driver }}"
-    pod-infra-container-image: "{{ registry_url }}/pause:3.9"
+    - "cgroup-driver={{ cgroup_driver }}"
+    - "pod-infra-container-image={{ registry_url }}/pause:3.9"
 ---
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: ClusterConfiguration

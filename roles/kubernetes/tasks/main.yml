@@ -554,6 +554,7 @@
     - name: Установка плагина cilium
       shell: cilium install
       when: inventory_hostname == "master-node-1"
+      become: no
   when: cni_plugin_value == 'cilium'
 
 - name: Присоединение остальных control-plane узлов

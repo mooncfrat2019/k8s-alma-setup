@@ -40,21 +40,12 @@
     - role: docker-registry
       tags: docker-registry
 
-#- name: Настройка локального репозитория пакетов
-#  hosts: local_repo
-#  become: yes
-#  roles:
-#    - role: repository
-#      tags: repository
-
 - name: Настройка основных компонентов
   hosts: k8s_cluster
   become: yes
   roles:
     - role: etcd
       tags: etcd
-    - role: containerd
-      tags: containerd
     - role: kubernetes
       tags: kubernetes
 

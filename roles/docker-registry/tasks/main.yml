@@ -1,20 +1,17 @@
 ---
 - name: Обновление списка пакетов
-  apt:
-    update_cache: yes
-    cache_valid_time: 3600
+  shell: |
+    apt-get update
   when: inventory_hostname == "registry-server"
 
 - name: Установка Docker
-  apt:
-    name: "{{ item }}"
-    state: present
-  loop:
-    docker-cli
-    docker-compose-v2
-    docker-engine
-    docker-engine-rootless
-    docker-proxy
+  shell: |
+    apt-get install -y \
+      docker-cli \
+      docker-compose-v2 \
+      docker-engine \
+      docker-engine-rootless \
+      docker-proxy \
   ignore_errors: yes
   when: inventory_hostname == "registry-server"
 

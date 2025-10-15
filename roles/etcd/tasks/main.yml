@@ -165,6 +165,12 @@
     - etcd_generate_certs
     - inventory_hostname != groups['masters'][0]
 
+- name: Create directories for certs
+  file:
+    path: "{{ etcd_k8s_cert_dir }}"
+    state: directory
+    mode: "0755"
+
 # Копируем в Kubernetes PKI
 - name: Copy etcd CA to Kubernetes PKI directory
   copy:

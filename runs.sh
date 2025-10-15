@@ -38,3 +38,20 @@ ansible-playbook -i inventory/hosts.yml site.yml -e '{
   "need_restart": true,
   "need_k8s_prepare": true
 }' --tags transfer
+
+
+ansible-playbook -i inventory/hosts.yml site.yml -e '{
+  "super_user": "altlinux",
+  "host_1": "37.139.43.48",
+  "host_2": "217.16.22.229",
+  "host_3": "89.208.221.86",
+  "in_ip_1": "10.0.3.241",
+  "in_ip_2": "10.0.3.97",
+  "in_ip_3": "10.0.3.105",
+  "host_registry": "89.208.222.175",
+  "pod_network_cidr": "10.244.0.0/16",
+  "cni_plugin": "cilium",
+  "skip_bundle_transfer": false,
+  "need_restart": true,
+  "need_k8s_prepare": true
+}' --tags transfer

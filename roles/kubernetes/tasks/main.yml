@@ -559,12 +559,36 @@
 
 - name: Присоединение остальных control-plane узлов
   block:
+    - name: Получение join команды с первого мастера
+      set_fact:
+        control_plane_join_command: "{{ hostvars['master-node-1'].control_plane_join_command | default('') }}"
+      when: inventory_hostname != "master-node-1"
+
+    - name: Проверка наличия join команды
+      fail:
+        msg: "Join command not available for {{ inventory_hostname }}. First master may not have initialized properly."
+      when:
+        - inventory_hostname != "master-node-1"
+        - control_plane_join_command == ""
+
     - name: Присоединение control-plane узла
       command: "{{ control_plane_join_command }}"
       when:
         - inventory_hostname != "master-node-1"
         - inventory_hostname in groups['masters']
+        - control_plane_join_command != ""
       become: yes
+      register: join_result
+
+    - name: Отображение результата присоединения
+      debug:
+        var: join_result.stdout
+      when: join_result is defined
+
+    - name: Проверка успешности присоединения
+      fail:
+        msg: "Failed to join {{ inventory_hostname }} to cluster"
+      when: join_result is defined and join_result.rc != 0
 
 - name: Проверка состояния кластера
   block:
